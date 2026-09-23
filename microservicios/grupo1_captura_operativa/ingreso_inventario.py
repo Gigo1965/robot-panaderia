@@ -170,6 +170,34 @@ def _ya_existe(registros, fecha, factura, nombre, cantidad):
     return None
 
 
+def escribir_fila_ingreso(ws, tabla, fecha, factura, nombre, cantidad, es_produccion, proveedor=None):
+    """Agrega UNA fila a TablaIngresos con sus formulas. Devuelve el numero de fila.
+
+    La usan registrar_ingresos() y tambien el Grupo 2 (hornadas), que puede
+    escribir cantidades NEGATIVAS como correccion al anular una hornada.
+    """
+    valores = {"Fecha": fecha, "Factura": factura,
+               "Proveedor": "Interno" if es_produccion else proveedor}
+    if es_produccion:
+        valores.update({"Producción propia": nombre, "Cantidad Producción": cantidad})
+    else:
+        valores.update({"Compra externa": nombre, "Cantidad Compras": cantidad})
+
+    fila = agregar_fila(ws, tabla, valores, columnas_clave=["Fecha"])
+
+    # Formulas de la fila (texto identico al de las filas existentes).
+    # Solo se escribe el Total del lado que se uso: si no, quedaria
+    # vacio x vacio = #VALUE! en el lado sin datos.
+    ws[f"E{fila}"] = FORMULA_PRECIO_COMPRA.format(r=fila)
+    ws[f"I{fila}"] = FORMULA_PRECIO_PRODUCCION.format(r=fila)
+    ws[f"L{fila}"] = FORMULA_CATEGORIA.format(r=fila)
+    if es_produccion:
+        ws[f"J{fila}"] = FORMULA_TOTAL_PRODUCCION
+    else:
+        ws[f"F{fila}"] = FORMULA_TOTAL_COMPRA.format(r=fila)
+    return fila
+
+
 def registrar_ingresos(lineas, factura, proveedor=None, fecha=None):
     """Registra VARIAS lineas de un mismo documento (factura o lote) en un solo guardado.
 
@@ -206,25 +234,7 @@ def registrar_ingresos(lineas, factura, proveedor=None, fecha=None):
                 continue
 
             es_produccion = item["movimiento"] == "produccion"
-            valores = {"Fecha": fecha, "Factura": factura,
-                       "Proveedor": "Interno" if es_produccion else proveedor}
-            if es_produccion:
-                valores.update({"Producción propia": nombre, "Cantidad Producción": cantidad})
-            else:
-                valores.update({"Compra externa": nombre, "Cantidad Compras": cantidad})
-
-            fila = agregar_fila(ws, tabla, valores, columnas_clave=["Fecha"])
-
-            # Formulas de la fila (texto identico al de las filas existentes).
-            # Solo se escribe el Total del lado que se uso: si no, quedaria
-            # vacio x vacio = #VALUE! en el lado sin datos.
-            ws[f"E{fila}"] = FORMULA_PRECIO_COMPRA.format(r=fila)
-            ws[f"I{fila}"] = FORMULA_PRECIO_PRODUCCION.format(r=fila)
-            ws[f"L{fila}"] = FORMULA_CATEGORIA.format(r=fila)
-            if es_produccion:
-                ws[f"J{fila}"] = FORMULA_TOTAL_PRODUCCION
-            else:
-                ws[f"F{fila}"] = FORMULA_TOTAL_COMPRA.format(r=fila)
+            fila = escribir_fila_ingreso(ws, tabla, fecha, factura, nombre, cantidad, es_produccion, proveedor)
 
             existentes.append({"_fila": fila, "Fecha": fecha, "Factura": factura,
                                "Compra externa": None if es_produccion else nombre,

@@ -1,0 +1,87 @@
+"""Prueba de Hornadas SOBRE LA COPIA LOCAL del Excel (no toca Google Drive).
+
+Antes, la copia debe tener aplicada la migracion 001:
+    py -m migraciones.m001_grupo2 --local
+
+Uso (desde la carpeta ROBOT PANADERO):
+    py -m microservicios.grupo2_inventario.probar_hornadas
+"""
+import os
+
+# Forzar modo local ANTES de importar el resto (asi nunca toca Drive)
+os.environ["ORIGEN_EXCEL"] = "local"
+os.environ.setdefault("EXCEL_LOCAL_PATH", "datos_prueba/maestro_prueba.xlsx")
+
+import logging                                                  # noqa: E402
+
+from conexion_drive import leer_excel                           # noqa: E402
+from conexion_drive.tiempo import ahora_local                   # noqa: E402
+from microservicios.grupo1_captura_operativa.catalogo import ComboInactivo  # noqa: E402
+from microservicios.grupo1_captura_operativa.ventas_despacho import registrar_venta_despacho  # noqa: E402
+from .hornadas import HornadaInvalida, anular_hornada, registrar_hornada  # noqa: E402
+
+logging.basicConfig(level=logging.WARNING)
+MESES = "BCDEFGHIJKLM"   # columnas de enero a diciembre en 'flujo caja anual'
+
+
+def existencias_combo():
+    ctrl = leer_excel()["Control de Inventario"]
+    return {ctrl.cell(f, 1).value: (ctrl.cell(f, 6).value, ctrl.cell(f, 9).value)
+            for f in range(5, ctrl.max_row + 1)
+            if ctrl.cell(f, 1).value in ("CupCake", "Gaseosa Coca Cola Regular - 600 ml")}
+
+
+def foto():
+    wb = leer_excel()
+    ctrl = wb["Control de Inventario"]
+    existencia = {ctrl.cell(f, 1).value: ctrl.cell(f, 6).value for f in range(5, ctrl.max_row + 1)
+                  if ctrl.cell(f, 1).value in ("Baguette", "CupCake")}
+    col = MESES[ahora_local().month - 1]
+    anual = wb["flujo caja anual"]
+    return existencia, {"cantidad pan baguette (mes)": anual[f"{col}9"].value,
+                        "cantidad cupcakes (mes)": anual[f"{col}10"].value}
+
+
+def paso(titulo):
+    print(f"\n--- {titulo} ---")
+
+
+if __name__ == "__main__":
+    print("ANTES:", *foto())
+
+    paso("1) Hornada nueva: 120 Baguette")
+    momento = ahora_local()
+    print(" ", registrar_hornada("P01", 120, momento))
+
+    paso("2) La misma hornada otra vez (debe decir DUPLICADO)")
+    print(" ", registrar_hornada("P01", 120, momento))
+
+    paso("3) Hornada nueva: 40 CupCake")
+    print(" ", registrar_hornada("Pa01", 40))
+
+    paso("4) Producto que no es de produccion propia (debe rechazarse)")
+    try:
+        registrar_hornada("L01", 10)
+    except HornadaInvalida as error:
+        print(f"  Rechazado correctamente: {error}")
+
+    print("\nDESPUES de registrar:", *foto())
+    print("  Baguette debe subir 120 y CupCake 40, en inventario y en el mes de 'flujo caja anual'.")
+
+    paso("5) Anular la hornada de Baguette (G2 = 0 + correccion negativa)")
+    print(" ", anular_hornada("P01"))
+
+    paso("6) Anularla otra vez (debe decir YA_ESTABA_ANULADA)")
+    print(" ", anular_hornada("P01"))
+
+    print("\nDESPUES de anular:", *foto())
+    print("  Baguette debe volver a como estaba ANTES; CupCake se queda con +40.")
+
+    paso("7) Combos descuentan inventario: vender 1 Combo 2 en despacho (2 CupCake + 1 Coca Cola)")
+    print("  ANTES   (existencia, salidas en combos):", existencias_combo())
+    try:
+        registrar_venta_despacho("co02", 1)
+        print("  DESPUES (existencia, salidas en combos):", existencias_combo())
+        print("  CupCake debe bajar 2 y la Coca Cola 1.")
+    except ComboInactivo as error:
+        print(f"  Hoy el Combo 2 no esta activo, no se puede probar este paso: {error}")

@@ -127,3 +127,16 @@ def buscar_errores(contenido: bytes, maximo: int = 20):
                     if len(errores) >= maximo:
                         return errores
     return errores
+
+
+def valores_recalculados(wb):
+    """Recalcula una COPIA del libro que se esta editando y la devuelve con valores.
+
+    Sirve cuando una edicion necesita leer un resultado que depende de lo que
+    se acaba de escribir (ej. escribir la cantidad de la hornada en G4 y luego
+    leer el costo unitario que la receta calcula con esa cantidad). El libro
+    original 'wb' no se modifica.
+    """
+    memoria = BytesIO()
+    wb.save(memoria)
+    return load_workbook(BytesIO(recalcular_bytes(memoria.getvalue())), data_only=True)
