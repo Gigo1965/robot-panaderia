@@ -1,7 +1,8 @@
 """Prueba de Hornadas SOBRE LA COPIA LOCAL del Excel (no toca Google Drive).
 
-Antes, la copia debe tener aplicada la migracion 001:
+Antes, la copia debe tener aplicadas las migraciones 001 y 002:
     py -m migraciones.m001_grupo2 --local
+    py -m migraciones.m002_consumo_mp --local
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m microservicios.grupo2_inventario.probar_hornadas
@@ -22,6 +23,15 @@ from .hornadas import HornadaInvalida, anular_hornada, registrar_hornada  # noqa
 
 logging.basicConfig(level=logging.WARNING)
 MESES = "BCDEFGHIJKLM"   # columnas de enero a diciembre en 'flujo caja anual'
+
+
+MATERIAS = ("HARINA FLORES 25 KG FUERTE", "LEVADURA TEMPO SALADA 500 GR", "Leche Suli Semidescremada 1.5% grasa  - 1 L")
+
+
+def existencias_mp():
+    ctrl = leer_excel()["Control de Inventario"]
+    return {ctrl.cell(f, 1).value[:22]: round(ctrl.cell(f, 6).value, 4) for f in range(5, ctrl.max_row + 1)
+            if ctrl.cell(f, 1).value in MATERIAS}
 
 
 def existencias_combo():
@@ -48,6 +58,7 @@ def paso(titulo):
 
 if __name__ == "__main__":
     print("ANTES:", *foto())
+    print("Materia prima ANTES:", existencias_mp())
 
     paso("1) Hornada nueva: 120 Baguette")
     momento = ahora_local()
@@ -67,6 +78,9 @@ if __name__ == "__main__":
 
     print("\nDESPUES de registrar:", *foto())
     print("  Baguette debe subir 120 y CupCake 40, en inventario y en el mes de 'flujo caja anual'.")
+    print("Materia prima DESPUES de hornear:", existencias_mp())
+    print("  Harina: 120 x 230 g + 40 x 25 g = 28.6 kg = 1.144 sacos menos. Levadura: 414 g + 60 g = 0.948 paquetes.")
+    print("  Leche: 40 CupCake x 15 ml = 0.6 litros menos.")
 
     paso("5) Anular la hornada de Baguette (G2 = 0 + correccion negativa)")
     print(" ", anular_hornada("P01"))
@@ -76,6 +90,8 @@ if __name__ == "__main__":
 
     print("\nDESPUES de anular:", *foto())
     print("  Baguette debe volver a como estaba ANTES; CupCake se queda con +40.")
+    print("Materia prima DESPUES de anular la Baguette:", existencias_mp())
+    print("  Solo queda rebajado lo de los 40 CupCake (harina 0.04 sacos, levadura 0.12, leche 0.6).")
 
     paso("7) Combos descuentan inventario: vender 1 Combo 2 en despacho (2 CupCake + 1 Coca Cola)")
     print("  ANTES   (existencia, salidas en combos):", existencias_combo())

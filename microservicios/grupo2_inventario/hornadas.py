@@ -11,12 +11,14 @@ Un solo registro del panadero en el SaaS hace TODO esto en el mismo guardado
      ('pan baguette' / 'cupcakes', tomado de la celda A6 de la hoja de costo).
   3. 'Ingreso de Inventario': agrega la produccion propia con el nombre de la
      tabla maestra ('Baguette' / 'CupCake'), para que sume al inventario.
+  4. 'Consumo de Materia Prima' (migracion m002): una fila por cada materia prima
+     que gasta la receta (harina, sal, levadura...), para rebajarla del inventario.
 
 Anular una hornada (anular_hornada):
   - Escribe G2 = 0 en la hoja de costo (junto al texto 'ORDEN ANULADA').
-  - Agrega filas de CORRECCION con cantidad NEGATIVA en 'Historico Diario' y en
-    'Ingreso de Inventario': la hornada original queda como rastro y la suma
-    neta queda en cero (en inventario y en 'flujo caja anual').
+  - Agrega filas de CORRECCION con cantidad NEGATIVA en 'Historico Diario', en
+    'Ingreso de Inventario' y en 'Consumo de Materia Prima': la hornada original
+    queda como rastro y la suma neta queda en cero (inventario y 'flujo caja anual').
 
 Duplicados: misma Fecha + Hora + Producto + Cantidad en 'Historico Diario'.
 """
@@ -40,6 +42,9 @@ HOJAS_COSTO = {
 }
 SINONIMOS = {"p01": "P01", "baguette": "P01", "pan baguette": "P01",
              "pa01": "Pa01", "cupcake": "Pa01", "cupcakes": "Pa01"}
+
+
+HOJA_CONSUMO, TABLA_RECETA, TABLA_CONSUMO = "Consumo de Materia Prima", "TablaRecetaConsumo", "TablaConsumoMP"
 
 
 class HornadaInvalida(Exception):
@@ -79,6 +84,42 @@ def _buscar_en_historico(ws, tabla, fecha, hora, nombre, cantidad):
                 and fila.get("Producto") == nombre and fila.get("Cantidad producida") == cantidad):
             return fila
     return None
+
+
+def _escribir_consumo(wb, wb_calculado, fecha, lote, codigo, nombre_inv, cantidad):
+    """Una fila por materia prima de la receta. Devuelve la lista de filas escritas."""
+    if HOJA_CONSUMO not in wb.sheetnames:
+        raise HornadaInvalida("Falta la hoja 'Consumo de Materia Prima': aplique la migracion m002_consumo_mp.")
+    ws_r, tabla_r = obtener_tabla(wb_calculado, HOJA_CONSUMO, TABLA_RECETA)
+    ws_c, tabla_c = obtener_tabla(wb, HOJA_CONSUMO, TABLA_CONSUMO)
+    filas = []
+    for linea in leer_tabla(ws_r, tabla_r):
+        if str(linea.get("Codigo") or "").strip() != codigo:
+            continue
+        por_unidad, contenido = linea.get("Cantidad por unidad"), linea.get("Contenido por paquete")
+        if not isinstance(por_unidad, (int, float)) or not isinstance(contenido, (int, float)) or contenido <= 0:
+            raise HornadaInvalida(f"Receta incompleta para {linea.get('Materia prima')}: {por_unidad!r} / {contenido!r}")
+        total = round(cantidad * por_unidad, 4)
+        filas.append(agregar_fila(ws_c, tabla_c, {
+            "Fecha": fecha, "Lote": lote, "Producto horneado": nombre_inv, "Cantidad horneada": cantidad,
+            "Materia prima": linea["Materia prima"], "Consumo por unidad": por_unidad, "Consumo total": total,
+            "Contenido por paquete": contenido, "Paquetes consumidos": round(total / contenido, 4),
+        }, columnas_clave=["Fecha"]))
+    return filas
+
+
+def _revertir_consumo(wb, fecha, lote_original, lote_correccion):
+    ws_c, tabla_c = obtener_tabla(wb, HOJA_CONSUMO, TABLA_CONSUMO)
+    originales = [f for f in leer_tabla(ws_c, tabla_c) if f.get("Lote") == lote_original]
+    filas = []
+    for f in originales:
+        filas.append(agregar_fila(ws_c, tabla_c, {
+            "Fecha": fecha, "Lote": lote_correccion, "Producto horneado": f["Producto horneado"],
+            "Cantidad horneada": -f["Cantidad horneada"], "Materia prima": f["Materia prima"],
+            "Consumo por unidad": f["Consumo por unidad"], "Consumo total": -f["Consumo total"],
+            "Contenido por paquete": f["Contenido por paquete"], "Paquetes consumidos": -f["Paquetes consumidos"],
+        }, columnas_clave=["Fecha"]))
+    return filas
 
 
 def _lote(fecha, hora, codigo):
@@ -122,7 +163,8 @@ def registrar_hornada(producto, cantidad, momento=None):
         ws_c[cfg["fecha"]] = fecha
         ws_c[cfg["hora"]] = hora
         ws_c[cfg["anulada"]] = None
-        calculado = valores_recalculados(wb)[cfg["hoja"]]
+        wb_calculado = valores_recalculados(wb)
+        calculado = wb_calculado[cfg["hoja"]]
         costo, precio = calculado[cfg["costo"]].value, calculado[cfg["precio"]].value
         if not isinstance(costo, (int, float)) or not isinstance(precio, (int, float)):
             raise HornadaInvalida(f"La hoja '{cfg['hoja']}' no calculo costo/precio ({costo!r}, {precio!r}).")
@@ -137,14 +179,17 @@ def registrar_hornada(producto, cantidad, momento=None):
         lote = _lote(fecha, hora, codigo)
         fila_i = escribir_fila_ingreso(ws_i, tabla_i, fecha, lote, nombre_inv, cantidad, es_produccion=True)
 
+        # 4) Consumo de materia prima segun la receta
+        filas_c = _escribir_consumo(wb, wb_calculado, fecha, lote, codigo, nombre_inv, cantidad)
+
         registrar_evento(wb, modulo="Hornadas", tipo_evento="HORNADA", entidad=cfg["hoja"], id_entidad=lote,
                          accion="INSERT", estado="REGISTRADA", valor_referencia=valores["Venta total"],
                          detalle=f"{cantidad} x {nombre_hist} a costo {costo} | Historico fila {fila_h} | "
-                                 f"Ingreso fila {fila_i}")
+                                 f"Ingreso fila {fila_i} | Consumo filas {filas_c}")
         return {"hubo_cambios": True, "estado": "REGISTRADA", "lote": lote, "producto": nombre_hist,
                 "cantidad": cantidad, "costo_unitario": costo, "precio_unitario": precio,
                 "venta_total": valores["Venta total"], "utilidad_bruta": valores["Utilidad bruta"],
-                "fila_historico": fila_h, "fila_ingreso": fila_i}
+                "fila_historico": fila_h, "fila_ingreso": fila_i, "filas_consumo": filas_c}
 
     return editar_excel(_editar, descripcion=f"Hornada {cantidad} x {codigo}")
 
@@ -180,12 +225,14 @@ def anular_hornada(producto):
         ws_i, tabla_i = obtener_tabla(wb, "Ingreso de Inventario", "TablaIngresos")
         lote = "ANULA-" + _lote(fecha, hora, codigo)
         fila_i = escribir_fila_ingreso(ws_i, tabla_i, fecha, lote, nombre_inv, -cantidad, es_produccion=True)
+        filas_c = _revertir_consumo(wb, fecha, _lote(fecha, hora, codigo), lote)
 
         registrar_evento(wb, modulo="Hornadas", tipo_evento="ANULACION_HORNADA", entidad=cfg["hoja"],
                          id_entidad=lote, accion="G2=0 + correccion negativa", estado="ANULADA",
                          valor_referencia=correccion["Venta total"],
-                         detalle=f"-{cantidad} x {nombre_hist} | Historico fila {fila_h} | Ingreso fila {fila_i}")
+                         detalle=f"-{cantidad} x {nombre_hist} | Historico fila {fila_h} | Ingreso fila {fila_i} | "
+                                 f"Consumo filas {filas_c}")
         return {"hubo_cambios": True, "estado": "ANULADA", "lote": lote, "cantidad_corregida": -cantidad,
-                "fila_historico": fila_h, "fila_ingreso": fila_i}
+                "fila_historico": fila_h, "fila_ingreso": fila_i, "filas_consumo": filas_c}
 
     return editar_excel(_editar, descripcion=f"Anular hornada {codigo}")
