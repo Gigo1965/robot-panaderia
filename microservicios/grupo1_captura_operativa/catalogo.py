@@ -9,6 +9,15 @@ primero en combos y despues en TABLA CRUCE MAESTRA. TABLA CRUCE MAESTRA MP
 (materia prima) NUNCA da precio de venta.
 
 El producto se puede pedir por CODIGO (P01, co02...) o por el nombre EXACTO.
+
+Reglas de ofertas confirmadas por el usuario (23-sep-2026), iguales para
+despacho y venta en linea:
+  - Combos: solo existen cuando su detonador los activa (ej. temperatura),
+    y ya traen su descuento dentro del 'Precio de Oferta'.
+  - Dias de pago (15 y 30) y feriados: 5% de descuento en TODOS los
+    productos, y ese dia NO hay combos.
+Las banderas 'Feriado Activo Hoy' / 'Dia de Pago Activo Hoy' se leen de
+NODO INTEGRAL (Regla #4: NODO INTEGRAL es quien las calcula).
 """
 from conexion_drive.tablas import leer_tabla, obtener_tabla
 
@@ -27,6 +36,41 @@ class PrecioSinCalcular(Exception):
     pass
 
 
+HOJA_INTERFACE = "Interface digital"
+
+
+def _buscar_valor_por_etiqueta(ws, etiqueta, col_etiqueta, col_valor):
+    for fila in range(1, ws.max_row + 1):
+        texto = ws.cell(fila, col_etiqueta).value
+        if isinstance(texto, str) and texto.strip().lower() == etiqueta.lower():
+            return ws.cell(fila, col_valor).value
+    raise KeyError(f"No encontre '{etiqueta}' en la hoja '{ws.title}'")
+
+
+def _es_si(valor):
+    """Solo 'SI' (o VERDADERO) cuenta como activo. '[SI/NO]' u otro texto = no activo."""
+    if isinstance(valor, bool):
+        return valor
+    return isinstance(valor, str) and valor.strip().upper() in ("SI", "SÍ", "TRUE", "VERDADERO")
+
+
+def leer_reglas_del_dia(wb_valores):
+    """Banderas del dia (NODO INTEGRAL) y el % de descuento general (Interface digital!B5)."""
+    nodo = wb_valores["NODO INTEGRAL"]
+    tarifa = _buscar_valor_por_etiqueta(nodo, "Tarifa Base KM", 2, 3)
+    pct = _buscar_valor_por_etiqueta(wb_valores[HOJA_INTERFACE], "Días de Pago o feriado", 1, 2)
+    feriado = _es_si(_buscar_valor_por_etiqueta(nodo, "Feriado Activo Hoy", 2, 3))
+    dia_pago = _es_si(_buscar_valor_por_etiqueta(nodo, "Día de Pago Activo Hoy", 2, 3))
+    return {
+        "feriado": feriado,
+        "dia_pago": dia_pago,
+        "descuento_general": feriado or dia_pago,          # ese dia: 5% a todo y sin combos
+        "detonador_general": "FERIADO" if feriado else ("DIA_PAGO" if dia_pago else None),
+        "pct_general": float(pct) if isinstance(pct, (int, float)) else 0.0,
+        "tarifa_km": float(tarifa) if isinstance(tarifa, (int, float)) else 0.0,
+    }
+
+
 def _texto(valor):
     return "" if valor is None else str(valor).strip()
 
@@ -41,6 +85,7 @@ class Catalogo:
     def __init__(self, wb_valores):
         self.productos = self._leer_productos(wb_valores)
         self.combos = self._leer_combos(wb_valores)
+        self.reglas = leer_reglas_del_dia(wb_valores)
 
     # ------------------------------------------------------------------ lectura
     @staticmethod
@@ -107,7 +152,7 @@ class Catalogo:
         for lista in (self.combos, self.productos):
             for item in lista:
                 if item["codigo"].casefold() == buscado.casefold() or _texto(item["nombre"]) == buscado:
-                    return self._validar(item, permitir_combo_inactivo)
+                    return self._validar(item, permitir_combo_inactivo, self.reglas)
 
         raise ProductoNoEncontrado(
             f"'{buscado}' no existe en TABLA CRUCE MAESTRA ni en Tabla Combos Dinamicos. "
@@ -115,9 +160,16 @@ class Catalogo:
         )
 
     @staticmethod
-    def _validar(item, permitir_combo_inactivo):
-        if item["origen"] == "Tabla Combos Dinamicos" and not item["activo"] and not permitir_combo_inactivo:
-            raise ComboInactivo(f"El combo '{item['nombre']}' ({item['codigo']}) no esta ACTIVO hoy.")
+    def _validar(item, permitir_combo_inactivo, reglas):
+        es_combo = item["origen"] == "Tabla Combos Dinamicos"
+        if es_combo and not permitir_combo_inactivo:
+            if reglas["descuento_general"]:
+                motivo = "feriado" if reglas["feriado"] else "dia de pago"
+                raise ComboInactivo(
+                    f"Hoy es {motivo}: no hay combos, aplica el descuento general a todos los productos."
+                )
+            if not item["activo"]:
+                raise ComboInactivo(f"El combo '{item['nombre']}' ({item['codigo']}) no esta ACTIVO hoy.")
         if not _es_numero(item["precio"]):
             raise PrecioSinCalcular(
                 f"El precio de '{item['nombre']}' no esta calculado en el Excel (vale {item['precio']!r}). "
@@ -127,5 +179,6 @@ class Catalogo:
 
     def lista_para_mostrar(self):
         """Lista (codigo, nombre, precio) de lo que se puede vender hoy: productos + combos activos."""
-        vendibles = [c for c in self.combos if c["activo"]] + self.productos
+        combos_hoy = [] if self.reglas["descuento_general"] else [c for c in self.combos if c["activo"]]
+        vendibles = combos_hoy + self.productos
         return [(i["codigo"], i["nombre"], i["precio"]) for i in vendibles]

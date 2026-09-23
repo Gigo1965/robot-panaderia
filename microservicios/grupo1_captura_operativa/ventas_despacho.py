@@ -4,6 +4,9 @@ Sigue el 'Diseño del robot' de Ventas despacho del libro de mapas V5:
   1. El despachador confirma una venta en el SaaS (producto por codigo + cantidad).
   2. El robot revisa duplicados: Fecha + Hora + Producto + Cantidad.
   3. Calcula el precio (combo primero, TABLA CRUCE MAESTRA despues).
+     En feriado o dia de pago (NODO INTEGRAL): no hay combos y el precio
+     unitario que se escribe ya lleva el 5% de descuento general
+     (misma regla que la venta en linea, confirmada 23-sep-2026).
   4. Agrega la fila nueva a Tabla6 (INSERT) con valores FIJOS:
        Fecha, Hora, Producto, Cantidad, Precio  -> valores fijos
        Total                                    -> formula de la misma fila
@@ -79,8 +82,14 @@ def registrar_venta_despacho(producto, cantidad, momento=None):
     fecha, hora = _separar_fecha_hora(momento)
 
     def _editar(wb, wb_valores):
-        item = Catalogo(wb_valores).resolver(producto)
+        catalogo = Catalogo(wb_valores)
+        item = catalogo.resolver(producto)
         nombre, precio = item["nombre"], round(float(item["precio"]), 2)
+        nota_descuento = ""
+        if catalogo.reglas["descuento_general"]:               # combos ya fueron rechazados
+            pct = catalogo.reglas["pct_general"]
+            precio = round(precio * (1 - pct), 2)
+            nota_descuento = f", {pct:.0%} {catalogo.reglas['detonador_general']}"
         ws, tabla = obtener_tabla(wb, HOJA, TABLA)
 
         existente = _buscar_venta(ws, tabla, fecha, hora, nombre, cantidad)
@@ -102,7 +111,7 @@ def registrar_venta_despacho(producto, cantidad, momento=None):
             wb, modulo="Ventas despacho", tipo_evento="VENTA_DESPACHO", entidad="Tabla6",
             id_entidad=f"fila {fila}", accion="INSERT", estado=ORDEN_CORRECTA,
             valor_referencia=round(precio * cantidad, 2),
-            detalle=f"{cantidad} x {nombre} a {precio} ({item['codigo']}, {item['origen']})",
+            detalle=f"{cantidad} x {nombre} a {precio} ({item['codigo']}, {item['origen']}{nota_descuento})",
         )
         return {"hubo_cambios": True, "estado": "REGISTRADA", "fila": fila, "producto": nombre,
                 "codigo": item["codigo"], "cantidad": cantidad, "precio": precio,
