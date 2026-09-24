@@ -21,7 +21,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from . import config
-from .recalculo import buscar_errores, recalcular_bytes, reparar_prefijos_xlfn
+from .recalculo import ErrorRecalculo, buscar_errores, recalcular_bytes, reparar_prefijos_xlfn
 
 log = logging.getLogger("conexion_drive")
 
@@ -110,7 +110,14 @@ def _explicar_error_google(error):
 # Descargar y subir
 # ----------------------------------------------------------------------------
 def _aplicar_escudo_xlfn(contenido: bytes) -> bytes:
-    """Repara en memoria las formulas que perdieron el prefijo _xlfn. y avisa."""
+    """Repara en memoria las formulas que perdieron el prefijo _xlfn. y avisa.
+
+    V2 (24-sep-2026): al reparar, openpyxl guarda las formulas pero BORRA los
+    resultados calculados (precios, totales...). Sin recalcular, el robot se
+    quedaria "ciego" (precios en None -> PrecioSinCalcular) hasta el siguiente
+    guardado. Por eso, SOLO cuando hubo reparaciones, se recalcula con
+    LibreOffice aqui mismo (~10 s extra, solo en ese caso raro).
+    """
     contenido, reparaciones = reparar_prefijos_xlfn(contenido)
     if reparaciones:
         log.warning(
@@ -119,6 +126,15 @@ def _aplicar_escudo_xlfn(contenido: bytes) -> bytes:
         )
         for detalle in reparaciones[:10]:
             log.warning("    %s", detalle)
+        if config.RECALCULAR:
+            try:
+                contenido = recalcular_bytes(contenido)
+            except ErrorRecalculo as error:
+                raise ErrorConexionExcel(
+                    "El escudo _xlfn reparo formulas pero no pudo recalcular con LibreOffice: "
+                    f"{error}"
+                ) from error
+            log.warning("Escudo _xlfn: libro recalculado despues de la reparacion.")
     return contenido
 
 
