@@ -23,8 +23,30 @@ Como se calculan los montos (sin doble descuento):
     (5%) a TODOS los productos. Esos dias no hay combos (los rechaza el catalogo).
   - SUBTOTAL_BRUTO  = suma de (cantidad x precio unitario)
   - DESCUENTO_TOTAL = suma de los descuentos de feriado / dia de pago
-  - ENVIO_MAPS      = DISTANCIA_KM x Tarifa Base KM (NODO INTEGRAL)
+  - ENVIO_MAPS      = DISTANCIA_KM x Tarifa Base KM (NODO INTEGRAL C3), sin IVA,
+                      redondeado HACIA ARRIBA al multiplo de 50 (regla unica,
+                      vive en google_maps.calcular_costo_envio)
   - TOTAL_A_COBRAR  = SUBTOTAL_BRUTO - DESCUENTO_TOTAL + ENVIO_MAPS
+
+Envio (Grupo 3B, 24-sep-2026). Este archivo es la UNICA puerta a Google Maps
+para bot y SaaS. El cliente debe ver el TOTAL COMPLETO antes de confirmar:
+
+  1. El cliente comparte su ubicacion:
+         cot = cotizar_envio((lat, lng))
+     Si cot['dentro_zona'] es False, el bot avisa (fuera del radio de entrega).
+     El bot guarda cot['km'] y cot['minutos'] en el estado de la conversacion.
+  2. Antes de confirmar, el bot muestra el total completo:
+         resumen = cotizar_pedido(lineas, distancia_km=cot['km'], minutos_entrega=cot['minutos'])
+  3. El cliente dice "Si":
+         registrar_pedido_digital(lineas, id_mensaje, ubicacion=(lat, lng),
+                                  distancia_km=cot['km'], minutos_entrega=cot['minutos'],
+                                  total_cotizado=resumen['total'])
+     Como ya trae los km, NO se vuelve a llamar a Google (no se paga dos veces).
+     Si el total cambio entre la cotizacion y el "Si" (ej. se apago un combo),
+     se rechaza sin escribir nada y el bot vuelve a cotizar.
+
+Sin ubicacion ni km = retiro en el local: envio 0 y NODO C9/C10 no se tocan.
+Fuera de zona o Google caido = se rechaza y no se escribe nada.
 
 Duplicados: cada pedido trae un 'id_mensaje' unico (el ID del mensaje de
 WhatsApp que confirmo el pedido). Queda anotado en RegistroEventos; si el
@@ -38,12 +60,77 @@ from conexion_drive.tablas import (
 )
 from conexion_drive.tiempo import a_hora_local, ahora_local
 
-from .catalogo import Catalogo
+from conexion_drive import leer_excel
+from microservicios.grupo3_integraciones import google_maps
+from microservicios.grupo3_integraciones.google_maps import ErrorGoogleMaps  # noqa: F401 (lo usan bot y pruebas)
+
+from .catalogo import Catalogo, leer_reglas_del_dia
 
 HOJA_INTERFACE, TABLA_INTERFACE = "Interface digital", "TablaInterfaceDigital"
 HOJA_DETALLE, TABLA_DETALLE = "Detalle comanda digital", "Tabla3"
 CONFIRMADO, ANULADO = "CONFIRMADO", "ANULADO"
 TIPO_EVENTO = "PEDIDO_DIGITAL"
+HOJA_NODO = "NODO INTEGRAL"
+ETIQUETA_MINUTOS, ETIQUETA_KM = "Tiempo Estimado Delivery", "Distancia Delivery (KM)"
+
+
+class FueraDeZona(Exception):
+    """El cliente esta mas lejos que el radio de entrega (RADIO_MAXIMO_KM)."""
+
+    def __init__(self, km, radio_maximo_km):
+        self.km, self.radio_maximo_km = km, radio_maximo_km
+        super().__init__(f"Fuera de zona: {km} km es mas que el radio de entrega de "
+                         f"{radio_maximo_km:g} km. No se escribio nada.")
+
+
+class TotalCambio(Exception):
+    """El total a registrar no coincide con el que se le mostro al cliente."""
+
+
+# ----------------------------------------------------------------------------
+# Envio (Google Maps)
+# ----------------------------------------------------------------------------
+def _resolver_envio(ubicacion, distancia_km, minutos_entrega, tarifa_km):
+    """Decide km, minutos y costo de envio. Lanza FueraDeZona o ErrorGoogleMaps.
+
+    Tres caminos:
+      - km ya cotizados        -> se usan tal cual (NO se llama a Google)
+      - solo ubicacion         -> se pregunta a Google Maps
+      - ni ubicacion ni km     -> retiro en el local, envio 0
+    """
+    if distancia_km is None and ubicacion is None:
+        return {"km": None, "minutos": None, "envio": 0, "origen": "RETIRO EN LOCAL"}
+
+    if tarifa_km <= 0:
+        raise ErrorGoogleMaps("NODO INTEGRAL 'Tarifa Base KM' esta vacia o en 0: no se puede cobrar envio.")
+    cfg = google_maps.configuracion()
+
+    if distancia_km is None:
+        lat, lng = ubicacion
+        ruta = google_maps.consultar_ruta(lat, lng)
+        km, minutos, origen = ruta["km"], ruta["minutos"], "GOOGLE MAPS"
+    else:
+        if isinstance(distancia_km, bool) or not isinstance(distancia_km, (int, float)) or distancia_km < 0:
+            raise ValueError(f"distancia_km invalida: {distancia_km!r}")
+        km, minutos, origen = round(float(distancia_km), 2), minutos_entrega, "COTIZACION"
+
+    if km > cfg["radio_maximo_km"]:
+        raise FueraDeZona(km, cfg["radio_maximo_km"])
+    envio = google_maps.calcular_costo_envio(km, tarifa_km, cfg["redondeo"])
+    return {"km": km, "minutos": minutos, "envio": envio, "origen": origen}
+
+
+def _escribir_ultimo_envio_en_nodo(wb, km, minutos):
+    """NODO INTEGRAL C9 (minutos) y C10 (km) = solo el ULTIMO pedido (referencia)."""
+    ws = wb[HOJA_NODO]
+    for fila in range(1, ws.max_row + 1):
+        etiqueta = ws.cell(fila, 2).value
+        if not isinstance(etiqueta, str):
+            continue
+        if etiqueta.strip() == ETIQUETA_MINUTOS and minutos is not None:
+            ws.cell(fila, 3).value = minutos
+        elif etiqueta.strip() == ETIQUETA_KM:
+            ws.cell(fila, 3).value = km
 
 
 # ----------------------------------------------------------------------------
@@ -63,8 +150,12 @@ def _normalizar_lineas(lineas):
     return normalizadas
 
 
-def calcular_pedido(lineas, catalogo, distancia_km=None):
-    """Devuelve las lineas calculadas y los 4 montos del pedido."""
+def calcular_pedido(lineas, catalogo, envio=0):
+    """Devuelve las lineas calculadas y los 4 montos del pedido.
+
+    envio: colones ya calculados por _resolver_envio (la regla de redondeo
+    vive en un solo lugar: google_maps.calcular_costo_envio).
+    """
     reglas = catalogo.reglas
     calculadas = []
     for linea in _normalizar_lineas(lineas):
@@ -93,7 +184,6 @@ def calcular_pedido(lineas, catalogo, distancia_km=None):
 
     subtotal_bruto = round(sum(l["bruto"] for l in calculadas), 2)
     descuento_total = round(sum(l["descuento"] for l in calculadas), 2)
-    envio = round(float(distancia_km) * reglas["tarifa_km"], 2) if distancia_km is not None else 0.0
     return {
         "lineas": calculadas,
         "subtotal_bruto": subtotal_bruto,
@@ -134,8 +224,46 @@ def _link_ubicacion(ubicacion):
 # ----------------------------------------------------------------------------
 # Funciones publicas
 # ----------------------------------------------------------------------------
+def cotizar_envio(ubicacion):
+    """SOLO LEE. El bot la llama cuando el cliente comparte su ubicacion.
+
+    Devuelve: dentro_zona, km, minutos, envio (None si fuera de zona),
+    radio_maximo_km, link_ubicacion. Si Google falla lanza ErrorGoogleMaps.
+    """
+    if not ubicacion:
+        raise ValueError("cotizar_envio necesita la ubicacion (latitud, longitud).")
+    tarifa = leer_reglas_del_dia(leer_excel())["tarifa_km"]
+    lat, lng = ubicacion
+    try:
+        info = _resolver_envio(ubicacion, None, None, tarifa)
+        return {"dentro_zona": True, "km": info["km"], "minutos": info["minutos"], "envio": info["envio"],
+                "radio_maximo_km": google_maps.configuracion()["radio_maximo_km"],
+                "link_ubicacion": _link_ubicacion((lat, lng))}
+    except FueraDeZona as fuera:
+        return {"dentro_zona": False, "km": fuera.km, "minutos": None, "envio": None,
+                "radio_maximo_km": fuera.radio_maximo_km, "link_ubicacion": _link_ubicacion((lat, lng))}
+
+
+def cotizar_pedido(lineas, ubicacion=None, distancia_km=None, minutos_entrega=None):
+    """SOLO LEE. Total COMPLETO (productos - descuentos + envio) para mostrarlo
+    al cliente ANTES de que confirme. Usa exactamente el mismo calculo que
+    registrar_pedido_digital, asi lo que ve el cliente es lo que se cobra.
+
+    Rechaza (lanza error) productos inexistentes, combos inactivos, fuera de
+    zona (FueraDeZona) y fallas de Google (ErrorGoogleMaps).
+    """
+    catalogo = Catalogo(leer_excel())
+    info = _resolver_envio(ubicacion, distancia_km, minutos_entrega, catalogo.reglas["tarifa_km"])
+    pedido = calcular_pedido(lineas, catalogo, info["envio"])
+    return {"subtotal_bruto": pedido["subtotal_bruto"], "descuento_total": pedido["descuento_total"],
+            "envio": pedido["envio"], "total": pedido["total"],
+            "km": info["km"], "minutos": info["minutos"], "origen_envio": info["origen"],
+            "lineas": [(l["cantidad"], l["nombre"], l["subtotal"]) for l in pedido["lineas"]]}
+
+
 def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
-                             ubicacion=None, distancia_km=None, momento=None,
+                             ubicacion=None, distancia_km=None, minutos_entrega=None,
+                             total_cotizado=None, momento=None,
                              fuente="WhatsApp", prefijo_id="WA-"):
     """Registra un pedido confirmado en 'Interface digital' + 'Detalle comanda digital'.
 
@@ -143,8 +271,12 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
                   (codigo o nombre exacto; tambien acepta la clave 'producto_id' del bot)
     id_mensaje:   ID unico del mensaje que confirmo el pedido (evita duplicados)
     ubicacion:    (latitud, longitud) compartida por el cliente, o None
-    distancia_km: distancia calculada por Google Maps (Grupo 3). Mientras no
-                  exista esa integracion, llega None y el envio queda en 0.
+    distancia_km, minutos_entrega: los que devolvio cotizar_envio(). Si llegan,
+                  NO se vuelve a llamar a Google. Si solo llega 'ubicacion', se
+                  consulta Google aqui (despues de revisar duplicados).
+                  Sin ubicacion ni km = retiro en el local (envio 0).
+    total_cotizado: el total que se le mostro al cliente (cotizar_pedido). Si
+                  ya no coincide, se lanza TotalCambio y no se escribe nada.
     """
     if not id_mensaje:
         raise ValueError("Falta id_mensaje: sin el no se pueden detectar pedidos duplicados.")
@@ -157,7 +289,14 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
         if repetido:
             return {"hubo_cambios": False, "estado": "DUPLICADO", "id_pedido": repetido}
 
-        pedido = calcular_pedido(lineas, Catalogo(wb_valores), distancia_km)
+        catalogo = Catalogo(wb_valores)
+        info = _resolver_envio(ubicacion, distancia_km, minutos_entrega, catalogo.reglas["tarifa_km"])
+        pedido = calcular_pedido(lineas, catalogo, info["envio"])
+        if total_cotizado is not None and round(float(total_cotizado), 2) != pedido["total"]:
+            raise TotalCambio(
+                f"El total cambio desde la cotizacion: se mostro {total_cotizado} y ahora es "
+                f"{pedido['total']}. No se escribio nada; hay que volver a cotizar."
+            )
         ws_i, tabla_i = obtener_tabla(wb, HOJA_INTERFACE, TABLA_INTERFACE)
         ws_d, tabla_d = obtener_tabla(wb, HOJA_DETALLE, TABLA_DETALLE)
         id_pedido = _siguiente_id_pedido(ws_i, tabla_i, prefijo_id)
@@ -177,7 +316,7 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
             "METODO_PAGO": metodo_pago,
             "LINK_UBICACION": _link_ubicacion(ubicacion),
             "ESTADO": CONFIRMADO,
-            "DISTANCIA_KM": distancia_km,
+            "DISTANCIA_KM": info["km"],
             "CODIGO_OFERTA": ", ".join(codigos_oferta) or None,
         }, columnas_clave=["ID_PEDIDO"])
 
@@ -195,17 +334,25 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
                 "DESCUENTO_ASIGNADO": linea["pct"],
             }, columnas_clave=["ID_PEDIDO"]))
 
+        if info["km"] is not None:
+            _escribir_ultimo_envio_en_nodo(wb, info["km"], info["minutos"])
+
+        if info["km"] is None:
+            texto_envio = "retiro en local (envio 0)"
+        else:
+            texto_envio = (f"{info['km']} km" + (f", {info['minutos']} min" if info["minutos"] is not None else "")
+                           + f", envio {info['envio']} ({info['origen']})")
         registrar_evento(
             wb, modulo="Pedidos digitales", tipo_evento=TIPO_EVENTO, entidad="TablaInterfaceDigital",
             id_entidad=id_pedido, accion="INSERT", estado=CONFIRMADO, origen=fuente,
             valor_referencia=pedido["total"],
-            detalle=f"id_mensaje={id_mensaje} | {len(pedido['lineas'])} lineas | "
-                    + ("sin distancia (envio 0)" if distancia_km is None else f"{distancia_km} km"),
+            detalle=f"id_mensaje={id_mensaje} | {len(pedido['lineas'])} lineas | {texto_envio}",
         )
         return {"hubo_cambios": True, "estado": "REGISTRADO", "id_pedido": id_pedido,
                 "fila_resumen": fila_resumen, "filas_detalle": filas_detalle,
                 "subtotal_bruto": pedido["subtotal_bruto"], "descuento_total": pedido["descuento_total"],
                 "envio": pedido["envio"], "total": pedido["total"],
+                "km": info["km"], "minutos": info["minutos"], "origen_envio": info["origen"],
                 "lineas": [(l["cantidad"], l["nombre"], l["subtotal"]) for l in pedido["lineas"]]}
 
     return editar_excel(_editar, descripcion=f"Pedido digital {id_mensaje}")
