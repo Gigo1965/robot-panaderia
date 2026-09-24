@@ -29,7 +29,7 @@ def prueba_lectura():
     inicio = time.monotonic()
     wb = leer_excel(solo_valores=True)
     print(f"OK  Descargado en {time.monotonic() - inicio:.1f} s")
-    print(f"    Hojas encontradas: {len(wb.sheetnames)} (se esperan 24)")
+    print(f"    Hojas encontradas: {len(wb.sheetnames)} (se esperan 25)")
 
     print("\n=== 3) Leyendo precios de TABLA CRUCE MAESTRA ===")
     ws, tabla = obtener_tabla(wb, "TABLA CRUCE MAESTRA", "TablaProductos")
