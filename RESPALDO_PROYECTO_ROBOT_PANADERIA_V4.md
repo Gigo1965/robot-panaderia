@@ -1,7 +1,6 @@
-# Respaldo del Proyecto — Robot Panadería (Estudio de Factibilidad) — V3
+# Respaldo del Proyecto — Robot Panadería (Estudio de Factibilidad) — V4
 
-*Última actualización: 24-sep-2026. Reemplaza a las versiones anteriores
-(21-sep y V2 del 23-sep). Guarda este archivo en la carpeta del proyecto
+*Última actualización: 24-sep-2026 (cierre de sesión). Reemplaza a la V3. Guarda este archivo en la carpeta del proyecto
 (junto a CLAUDE.md) y súbelo al inicio de cualquier chat nuevo con Claude.*
 
 **Nota para quien retome este proyecto (incluido Claude en un chat nuevo):**
@@ -89,7 +88,7 @@ funcionar en la nube y de forma automática, sin depender de la PC del usuario.
 |---|---|---|
 | 1 — Captura operativa | Ventas despacho, Interface digital, Detalle comanda digital, Ingreso de Inventario | ✅ Completo y probado |
 | 2 — Inventario | Control de Inventario, Historico Diario (+ Consumo de Materia Prima) | ✅ Completo, migraciones aplicadas al Excel real |
-| 3 — Integraciones | NODO INTEGRAL, TABLA CRUCE MAESTRA, TABLA CRUCE MAESTRA MP, Tabla Combos Dinamicos | 🔶 3A completo; 3B y 3C pendientes |
+| 3 — Integraciones | NODO INTEGRAL, TABLA CRUCE MAESTRA, TABLA CRUCE MAESTRA MP, Tabla Combos Dinamicos | 🔶 3A completo; 3B parte 1 completa; 3B parte 2 y 3C pendientes |
 | 4 — Costeo | costo pan baguette, costo cupcakes, planilla, gasto operacional, valor activos | ⏳ Sin código |
 | 5 — Financiero | Flujo caja diario/anual/proyecto, Punto de Equilibrio, TIR VAR, proyeccion ventas, proyeccion anual ventas | ⏳ Sin código |
 
@@ -102,16 +101,17 @@ extensión "Claude Code for VS Code".
 ```
 ROBOT PANADERO/
 ├── CLAUDE.md
-├── .env                  (ignorado por Git)
+├── .env                  (ignorado por Git; incluye GOOGLE_MAPS_API_KEY)
 ├── .gitignore            (UTF-8)
 ├── credenciales/         (clave JSON de la cuenta de servicio, ignorada)
+├── romper_prueba.py      (herramienta de prueba del escudo _xlfn)
 ├── datos_prueba/         (maestro_prueba.xlsx, copia local fija, ignorada)
 ├── conexion_drive/       (drive_excel.py, recalculo.py, probar_conexion)
 ├── migraciones/          (m001_grupo2, m002_consumo_mp)
 ├── microservicios/
 │   ├── grupo1_captura_operativa/   ✅
 │   ├── grupo2_inventario/          ✅
-│   ├── grupo3_integraciones/       🔶 (nodo_integral)
+│   ├── grupo3_integraciones/       🔶 (nodo_integral, google_maps)
 │   ├── grupo4_costeo/              (vacía)
 │   └── grupo5_financiero/          (vacía)
 └── whatsapp_bot/         (conversación probada; aún no escribe a Excel)
@@ -129,6 +129,10 @@ se mueven con comandos de Terminal a su carpeta final.
 - Comandos útiles:
   - Probar conexión: `py -m conexion_drive.probar_conexion`
   - NODO INTEGRAL: `py -m microservicios.grupo3_integraciones.nodo_integral`
+  - Google Maps (solo lee): `py -m microservicios.grupo3_integraciones.google_maps <lat> <lng>`
+  - Modo prueba local (solo esa ventana de Terminal):
+    `$env:ORIGEN_EXCEL="local"; $env:EXCEL_LOCAL_PATH="datos_prueba/maestro_prueba.xlsx"`
+    y para volver a Drive: `Remove-Item Env:ORIGEN_EXCEL, Env:EXCEL_LOCAL_PATH`
   - Las migraciones se prueban primero con `--local` (sobre datos_prueba).
 
 ## 7. Git / GitHub
@@ -139,7 +143,10 @@ se mueven con comandos de Terminal a su carpeta final.
   `robot-panaderia-canas-*.json`, `*.xlsx`, `datos_prueba/`, `__pycache__`,
   `venv`. Verificado: el `.env` nunca se commiteó.
 - Commits clave: "V4" (conexion_drive + grupo1), cd7db42 (Grupo 2),
-  c52e289 (NODO INTEGRAL v3, tipo de cambio Hacienda).
+  c52e289 (NODO INTEGRAL v3, tipo de cambio Hacienda), 67d3361 (escudo _xlfn
+  + bitácora V3), 5becbcc (probar_conexion: 25 hojas), a3a69f1 (Grupo 3B parte 1).
+- Git en 3 pasos: `git add .` (meter en la caja) → `git commit -m "..."` (cerrar
+  y etiquetar) → `git push` (enviar a GitHub). Revisar antes con `git status`.
 - **Regla**: nunca editar en la web de GitHub; todo en VS Code →
   `git add` / `git commit` / `git push`. README para tutores: pendiente.
 
@@ -147,25 +154,46 @@ se mueven con comandos de Terminal a su carpeta final.
 
 - **Excel maestro**: en Drive (versión local de referencia: v68).
 - **Libro de mapas de celdas**: V8 (Reglas #12 no Google Sheets, #13 tipo de
-  cambio; clave de Google Maps retirada del libro y guardada en `.env`;
-  pestaña "Cambios V8").
+  cambio; pestaña "Cambios V8"). El Excel maestro tiene 25 hojas.
+- **Regla del usuario**: ninguna clave o dato de API se borra de los mapas sin
+  consultarle antes. La clave de Google Maps NO vuelve a los mapas: el usuario
+  la guarda en su PC y en su Drive; el robot la lee del `.env`.
 
-## 9. Dónde quedamos (24-sep-2026)
+## 9. Dónde quedamos (24-sep-2026, cierre)
 
-**En curso — escudo `_xlfn`**: función `reparar_prefijos_xlfn()` en
-`conexion_drive/recalculo.py` (repara TEXTJOIN, CONCAT, IFS, MAXIFS, MINIFS,
-SWITCH sin prefijo), llamada automáticamente dentro de `_descargar()` en
-`drive_excel.py` (cubre `leer_excel()` y `editar_excel()`). Falta la prueba
-real: correr `romper_prueba.py` (raíz del proyecto) para dañar una fórmula a
-propósito y luego `py -m conexion_drive.probar_conexion` para confirmar que
-se repara sola.
+**Hecho hoy:**
+- Escudo `_xlfn` COMPLETO: repara también fórmulas MATRICIALES (NODO
+  INTEGRAL C19/C20 son ArrayFormula). Probado en la PC rompiendo la copia de
+  prueba a propósito (`romper_prueba.py`, que guarda
+  `datos_prueba/maestro_prueba_RESPALDO.xlsx`) → el robot la reparó solo.
+- `probar_conexion.py` ahora espera 25 hojas (probado contra Drive).
+- Grupo 3B parte 1: `microservicios/grupo3_integraciones/google_maps.py`
+  (Routes API computeRouteMatrix). Prueba real OK: 2.32 km, 7 min, envío ₡1,200.
 
-**Siguientes pasos**:
-1. Confirmar escudo `_xlfn` y subirlo a GitHub.
-2. Grupo 3B: Google Maps (distancia / costo de envío por pedido).
-3. Grupo 3C: scraping Palí / Solera + promo Musmanni con visión de Claude.
-4. Grupos 4 (costeo) y 5 (financiero).
-5. Integración real del bot de WhatsApp (función compartida con el SaaS).
+**Decisiones Grupo 3B (proyecto académico):**
+- Origen = 10.42895, -85.09425 (aprox. 100 m del local). Radio máximo 10 km
+  (fuera de zona → el bot avisa). Envío = km × Tarifa Base KM (NODO C3),
+  sin IVA, redondeado HACIA ARRIBA al múltiplo de ₡50. Origen, radio y
+  redondeo configurables en `.env` (ORIGEN_LAT, ORIGEN_LNG, RADIO_MAXIMO_KM,
+  REDONDEO_ENVIO).
+- Km del pedido en su fila de Interface digital (N = DISTANCIA_KM,
+  I = ENVIO_MAPS); NODO C9/C10 = solo el último pedido (referencia).
+- La función compartida de pedidos es la ÚNICA puerta a Google Maps
+  (excepción a la regla de NODO INTEGRAL: la distancia depende del cliente).
+- Bot BILINGÜE (español/inglés), a construir en la fase de integración real
+  del bot: idioma elegido al saludar con botones; el Excel no cambia.
+  Pendiente decidir cómo se traducen los nombres de productos.
+
+**Siguientes pasos:**
+1. Confirmar la prueba "fuera de zona" (Liberia):
+   `py -m microservicios.grupo3_integraciones.google_maps 10.6346 -85.4377`
+2. Grupo 3B parte 2: conectar `google_maps.py` a `registrar_pedido_digital`
+   (escribir N e I en Interface digital y NODO C9/C10). Subir al chat el
+   archivo de pedidos digitales de grupo1 para integrarlo.
+3. Actualizar libro de mapas a V9 con los cambios del 3B (sin la clave).
+4. Grupo 3C: scraping Palí / Solera + promo Musmanni con visión de Claude.
+5. Grupos 4 (costeo) y 5 (financiero).
+6. Integración real del bot de WhatsApp (bilingüe, función compartida).
 
 **Pendientes de hosting (sin decidir)**:
 - Plan gratis de Actions en repo privado = 2,000 min/mes; un ping a Render
