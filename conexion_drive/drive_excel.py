@@ -21,7 +21,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from . import config
-from .recalculo import buscar_errores, recalcular_bytes
+from .recalculo import buscar_errores, recalcular_bytes, reparar_prefijos_xlfn
 
 log = logging.getLogger("conexion_drive")
 
@@ -109,13 +109,26 @@ def _explicar_error_google(error):
 # ----------------------------------------------------------------------------
 # Descargar y subir
 # ----------------------------------------------------------------------------
+def _aplicar_escudo_xlfn(contenido: bytes) -> bytes:
+    """Repara en memoria las formulas que perdieron el prefijo _xlfn. y avisa."""
+    contenido, reparaciones = reparar_prefijos_xlfn(contenido)
+    if reparaciones:
+        log.warning(
+            "Escudo _xlfn: se repararon %s formula(s) danadas (ej. por Google Sheets):",
+            len(reparaciones),
+        )
+        for detalle in reparaciones[:10]:
+            log.warning("    %s", detalle)
+    return contenido
+
+
 def _descargar():
-    """Devuelve (contenido_en_bytes, version)."""
+    """Devuelve (contenido_en_bytes, version), ya con el escudo _xlfn aplicado."""
     if _modo_local():
         ruta = Path(config.EXCEL_LOCAL_PATH)
         if not ruta.exists():
             raise ErrorConexionExcel(f"No existe la copia local: {ruta}")
-        return ruta.read_bytes(), str(ruta.stat().st_mtime_ns)
+        return _aplicar_escudo_xlfn(ruta.read_bytes()), str(ruta.stat().st_mtime_ns)
 
     from googleapiclient.http import MediaIoBaseDownload
 
@@ -134,7 +147,7 @@ def _descargar():
             _, terminado = descargador.next_chunk()
     except Exception as error:
         raise ErrorConexionExcel(_explicar_error_google(error)) from error
-    return memoria.getvalue(), metadatos["version"]
+    return _aplicar_escudo_xlfn(memoria.getvalue()), metadatos["version"]
 
 
 def _subir(contenido: bytes, version_descargada: str):

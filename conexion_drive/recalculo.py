@@ -10,6 +10,7 @@ formulas intactas despues del recalculo.
 """
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -17,6 +18,7 @@ import time
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.worksheet.formula import ArrayFormula
 from io import BytesIO
 
 from . import config
@@ -140,3 +142,62 @@ def valores_recalculados(wb):
     memoria = BytesIO()
     wb.save(memoria)
     return load_workbook(BytesIO(recalcular_bytes(memoria.getvalue())), data_only=True)
+
+
+# ----------------------------------------------------------------------------
+# Escudo _xlfn (contra el incidente de Google Sheets)
+# ----------------------------------------------------------------------------
+# Funciones "modernas" de Excel (2016+) que se guardan internamente con el
+# prefijo _xlfn. -- si un programa (ej. Google Sheets) las re-guarda sin ese
+# prefijo, Excel/LibreOffice ya no las reconocen y muestran #NAME?.
+_FUNCIONES_XLFN = ("TEXTJOIN", "CONCAT", "IFS", "MAXIFS", "MINIFS", "SWITCH")
+_PATRONES_XLFN = [
+    (nombre, re.compile(rf"(?<!_xlfn\.)\b{nombre}\s*\(", re.IGNORECASE))
+    for nombre in _FUNCIONES_XLFN
+]
+
+
+def _agregar_prefijos(formula: str) -> str:
+    """Pone _xlfn. a cada funcion moderna que no lo tenga (sin duplicarlo)."""
+    for nombre, patron in _PATRONES_XLFN:
+        formula = patron.sub(f"_xlfn.{nombre}(", formula)
+    return formula
+
+
+def reparar_prefijos_xlfn(contenido: bytes):
+    """Repara formulas que perdieron el prefijo _xlfn. (ej. TEXTJOIN -> #NAME?
+    tras abrirse por error con Google Sheets).
+
+    Revisa tanto formulas normales (texto que empieza con "=") como formulas
+    MATRICIALES (objetos ArrayFormula, que guardan su texto en .text) -- las
+    de NODO INTEGRAL C19/C20 son matriciales.
+
+    Devuelve (contenido_reparado, lista_de_reparaciones). Si no hay nada que
+    reparar, devuelve el mismo 'contenido' recibido, sin tocarlo.
+    """
+    wb = load_workbook(BytesIO(contenido), data_only=False)
+    reparaciones = []
+
+    for ws in wb.worksheets:
+        for fila in ws.iter_rows():
+            for celda in fila:
+                valor = celda.value
+                es_matricial = isinstance(valor, ArrayFormula)
+                texto = valor.text if es_matricial else valor
+                if not isinstance(texto, str) or not texto.startswith("="):
+                    continue
+                nuevo = _agregar_prefijos(texto)
+                if nuevo == texto:
+                    continue
+                reparaciones.append(f"{ws.title}!{celda.coordinate}: {texto} -> {nuevo}")
+                if es_matricial:
+                    valor.text = nuevo        # sigue siendo matricial, mismo rango
+                else:
+                    celda.value = nuevo
+
+    if not reparaciones:
+        return contenido, []
+
+    memoria = BytesIO()
+    wb.save(memoria)
+    return memoria.getvalue(), reparaciones
