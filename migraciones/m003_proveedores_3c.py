@@ -23,7 +23,15 @@ Uso (desde la carpeta ROBOT PANADERO):
     py -m migraciones.m003_proveedores_3c --archivo "ruta.xlsx"   (un archivo suelto)
     Agregar --sin-precios para NO aplicar el bloque D.
 """
+import os
 import sys
+
+# --local: igual que m001/m002. Debe ir ANTES de importar conexion_drive.config,
+# porque config lee ORIGEN_EXCEL al importarse. (Corregido 24-sep-2026: la 1a
+# version no tenia esto y con --local apuntaba a Drive.)
+if "--local" in sys.argv:
+    os.environ["ORIGEN_EXCEL"] = "local"
+    os.environ.setdefault("EXCEL_LOCAL_PATH", "datos_prueba/maestro_prueba.xlsx")
 
 ID_MIGRACION = "m003_proveedores_3c"
 
