@@ -1,8 +1,12 @@
 """Promociones de la competencia (Grupo 3C): Musmanni y Musi.
 
 Que hace (Reglas #18 y NODO INTEGRAL del libro de mapas):
-  Vocabulario: 2 COMPETIDORES (Musmanni y Musi, ambos de FIFCO). Cada uno publica
-  sus promociones en un sitio WordPress. Se escriben 2 TABLAS del Excel maestro:
+  Vocabulario: COMPETIDORES = marcas que publican promociones en un sitio WordPress.
+  Desde 25-sep-2026 solo se monitorea a MUSI (activo). Musi nacio en 2017 como el nuevo
+  nombre de los Musmanni Mini Super; las panaderias Musmanni siguen como marca aparte, sin
+  promociones web nuevas desde jul-2025, y quedan DESACTIVADAS aqui ("activo": False; se
+  reactivan cambiando esa marca). Ambas marcas son de Heineken Costa Rica desde ene-2026
+  (antes FIFCO). Se escriben 2 TABLAS del Excel maestro:
   NODO INTEGRAL (resumen) y Tabla Combos Dinamicos (detalle y valor).
 
   Capa 1 - API estructurada, SIN IA (gratis):
@@ -18,11 +22,14 @@ Que hace (Reglas #18 y NODO INTEGRAL del libro de mapas):
     VIGENTE     -> hay al menos una promo con fecha vigente.
     SIN_PROMO   -> la consulta funciono, pero no hay promo vigente:
                    se escribe "Sin promocion vigente (fecha)" y valor 0.
-    FALLO       -> no hubo conexion: NO se tocan las celdas.
+    FALLO       -> no hubo conexion, o Gemini no pudo leer TODAS las imagenes
+                   visibles (lectura incompleta): NO se tocan las celdas. Lo que si
+                   se leyo queda en el cache y la siguiente corrida completa el resto.
   Deja un evento COMPETENCIA en RegistroEventos.
 
 Celdas destino:
     Musmanni: NODO INTEGRAL C11 (resumen) | Tabla Combos Dinamicos D10 (detalle), E10 (valor)
+              (DESACTIVADO: no se consulta y sus celdas no se tocan)
     Musi:     NODO INTEGRAL C21 (resumen) | Tabla Combos Dinamicos D11 (detalle), E11 (valor)
               (las celdas de Musi las crea la migracion m004; sin ella el robot se detiene)
 
@@ -40,6 +47,8 @@ Uso (desde la carpeta ROBOT PANADERO):
 
 La clave de Gemini se lee SIEMPRE del .env (GEMINI_API_KEY); nunca va en el codigo.
 Modelo: opcional GEMINI_MODELO en el .env; si no esta, se elige el "flash" mas nuevo.
+Cupo gratuito: si Google avisa que se agoto el cupo DIARIO de un modelo, se pasa a otro
+"flash"; si se agota en todos, el robot deja de llamar a Gemini en esa corrida.
 """
 import base64
 import json
@@ -88,6 +97,7 @@ COMPETIDORES = {
         "tipo_promos": "promos",               # /wp-json/wp/v2/promos
         "celda_nodo": "C11", "celda_detalle": "D10", "celda_valor": "E10",
         "rotulo_requerido": None,
+        "activo": False,   # 25-sep-2026: sin promociones web nuevas; solo se monitorea a Musi
     },
     "Musi": {
         "base": "https://tiendasmusi.com",
@@ -95,6 +105,7 @@ COMPETIDORES = {
         "tipo_promos": None,
         "celda_nodo": "C21", "celda_detalle": "D11", "celda_valor": "E11",
         "rotulo_requerido": ("B21", "DATA OFERTA MUSI"),   # lo crea la migracion m004
+        "activo": True,
     },
 }
 
@@ -117,6 +128,10 @@ class ConsultaFallida(Exception):
     """El sitio o la API no respondio de forma util."""
 
 
+class CupoDiarioAgotado(ConsultaFallida):
+    """Google respondio 429 por el cupo DIARIO del nivel gratuito: reintentar hoy no sirve."""
+
+
 def hoy_cr():
     return datetime.now(HORA_CR).date()
 
@@ -134,12 +149,23 @@ def _pedir(url, datos=None, encabezados=None):
                 return respuesta.read(), tipo
         except urllib.error.HTTPError as e:
             try:
-                mensaje = json.loads(e.read().decode("utf-8"))["error"]["message"]
+                cuerpo_error = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                cuerpo_error = ""
+            try:
+                mensaje = json.loads(cuerpo_error)["error"]["message"]
                 ultimo_error = f"HTTP {e.code} - {mensaje[:200]}"
             except Exception:
                 ultimo_error = f"HTTP {e.code}"
+            if e.code == 429 and "PerDay" in cuerpo_error:
+                # Cupo DIARIO agotado (Google lo indica con un quotaId "...PerDay..."):
+                # esperar segundos no lo arregla; se reinicia al dia siguiente.
+                raise CupoDiarioAgotado(ultimo_error)
             if e.code in (429, 500, 502, 503, 504):
-                time.sleep(20 * intento)   # saturado: esperar mas y reintentar
+                if intento < REINTENTOS:   # saturado: esperar mas y reintentar
+                    print(f"      Servidor ocupado (HTTP {e.code}); reintento "
+                          f"{intento + 1} de {REINTENTOS} en {20 * intento} s...")
+                    time.sleep(20 * intento)
                 continue
             break                           # 400/401/403/404: reintentar no lo arregla
         except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -316,6 +342,9 @@ def _consultar_tipo_promos(datos, imagenes, notas):
 # ---------------------------------------------------------------- Capa 2: vision con Gemini
 _ultima_llamada_gemini = 0.0
 _modelo_elegido = None
+_modelos_alternos = []          # otros modelos "flash" por si el elegido esta saturado
+_modelos_agotados = set()       # modelos con el cupo DIARIO agotado (no se vuelven a usar hoy)
+_cupo_agotado = False           # True = todos los modelos sin cupo: no llamar mas a Gemini
 
 
 def _version(nombre):
@@ -326,7 +355,7 @@ def _version(nombre):
 
 def modelo_gemini(clave):
     """Nombre del modelo a usar (ej. 'gemini-3-flash'). Se decide una vez por corrida."""
-    global _modelo_elegido
+    global _modelo_elegido, _modelos_alternos
     if _modelo_elegido:
         return _modelo_elegido
     fijo = (os.getenv("GEMINI_MODELO") or "").strip()
@@ -345,17 +374,37 @@ def modelo_gemini(clave):
         raise ConsultaFallida("la clave no tiene ningun modelo 'flash' disponible")
     # El mas nuevo primero; a igual version, el estable antes que el 'preview'
     candidatos.sort(key=lambda n: (_version(n), "preview" not in n), reverse=True)
-    _modelo_elegido = candidatos[0].replace("models/", "")
-    print(f"    (modelo Gemini elegido: {_modelo_elegido})")
+    candidatos = [c.replace("models/", "") for c in candidatos]
+    _modelo_elegido, _modelos_alternos = candidatos[0], candidatos[1:3]
+    print(f"    (modelo Gemini elegido: {_modelo_elegido}; "
+          f"respaldo si esta saturado: {', '.join(_modelos_alternos) or 'ninguno'})")
     return _modelo_elegido
+
+
+def _cambiar_a_modelo_alterno(motivo="sigue saturado"):
+    """Pasa al siguiente 'flash' disponible (en rueda). El modelo actual vuelve al final de
+    la fila, salvo que tenga el cupo diario agotado. Devuelve False si no queda ninguno."""
+    global _modelo_elegido
+    disponibles = [m for m in _modelos_alternos if m not in _modelos_agotados]
+    if not disponibles:
+        return False
+    anterior = _modelo_elegido
+    _modelo_elegido = disponibles[0]
+    _modelos_alternos.remove(_modelo_elegido)
+    if anterior not in _modelos_agotados:
+        _modelos_alternos.append(anterior)
+    print(f"      {anterior} {motivo}: cambio al modelo de respaldo {_modelo_elegido}")
+    return True
 
 
 def leer_imagen_con_gemini(url, competidor, fecha):
     """Descarga la imagen y le pide a Gemini el JSON de la promocion."""
-    global _ultima_llamada_gemini
+    global _ultima_llamada_gemini, _cupo_agotado
     clave = os.getenv("GEMINI_API_KEY")
     if not clave:
         raise ConsultaFallida("falta GEMINI_API_KEY en el archivo .env")
+    if _cupo_agotado:
+        raise CupoDiarioAgotado("cupo diario de Gemini agotado en esta corrida (no se llamo)")
 
     imagen, tipo = _pedir(url)
     if not tipo.startswith("image/"):
@@ -372,11 +421,32 @@ def leer_imagen_con_gemini(url, competidor, fecha):
         ]}],
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0},
     }
-    url_modelo = f"{API_GEMINI}/models/{modelo_gemini(clave)}:generateContent"
-    respuesta, _ = _pedir(url_modelo, datos=json.dumps(cuerpo).encode("utf-8"),
-                          encabezados={"Content-Type": "application/json",
-                                       "x-goog-api-key": clave})
-    _ultima_llamada_gemini = time.time()
+    datos_json = json.dumps(cuerpo).encode("utf-8")
+    modelo_gemini(clave)
+    intentos_modelo = 1 + len(_modelos_alternos)   # cada modelo se prueba una vez por imagen
+    for _ in range(intentos_modelo):
+        url_modelo = f"{API_GEMINI}/models/{_modelo_elegido}:generateContent"
+        try:
+            respuesta, _ = _pedir(url_modelo, datos=datos_json,
+                                  encabezados={"Content-Type": "application/json",
+                                               "x-goog-api-key": clave})
+            break
+        except CupoDiarioAgotado:
+            _modelos_agotados.add(_modelo_elegido)
+            print(f"      {_modelo_elegido}: cupo DIARIO del nivel gratuito agotado")
+            if not _cambiar_a_modelo_alterno("sin cupo hoy"):
+                _cupo_agotado = True
+                print("      Ningun modelo 'flash' tiene cupo hoy: no se llama mas a Gemini "
+                      "en esta corrida (el cupo se reinicia a medianoche hora del Pacifico).")
+                raise
+        except ConsultaFallida as e:
+            saturado = str(e).startswith(("HTTP 503", "HTTP 429", "HTTP 500"))
+            if not (saturado and _cambiar_a_modelo_alterno()):
+                raise
+        finally:
+            _ultima_llamada_gemini = time.time()
+    else:
+        raise ConsultaFallida("todos los modelos 'flash' siguen saturados para esta imagen")
     try:
         texto = json.loads(respuesta)["candidates"][0]["content"]["parts"][0]["text"]
         leido = json.loads(texto)
@@ -447,8 +517,9 @@ def consultar_competidor(nombre, datos, con_vision, cache, hoy):
 
     vigentes, errores_vision = [], []
     if con_vision:
-        for img in visibles:
+        for n, img in enumerate(visibles, start=1):
             clave = _canonica(img["url"])
+            print(f"    imagen {n} de {len(visibles)}: {img['url'].rsplit('/', 1)[-1]}")
             if clave in cache:
                 leido, origen = cache[clave]["leido"], "cache"
             else:
@@ -459,6 +530,7 @@ def consultar_competidor(nombre, datos, con_vision, cache, hoy):
                     print(f"    Gemini FALLO en {img['url']}: {e}")
                     continue
                 cache[clave] = {"leido": leido, "fecha_lectura": hoy.isoformat()}
+                _guardar_cache(cache)      # se guarda en seguida: si se corta, no se pierde
                 origen = "Gemini"
             estado, precio = evaluar(leido, img["fecha"], hoy)
             precio_txt = f"₡{precio:,}" if precio else "sin precio"
@@ -467,10 +539,16 @@ def consultar_competidor(nombre, datos, con_vision, cache, hoy):
                 vigentes.append({"producto": leido.get("producto") or "promocion",
                                  "precio": precio, "estado": estado})
 
-    if con_vision and visibles and len(errores_vision) == len(visibles):
-        # Gemini fallo en TODAS: no se puede afirmar que no hay promos -> no tocar celdas
+    if con_vision and errores_vision:
+        # Lectura INCOMPLETA: una imagen sin leer podria ser una promo vigente, asi que no se
+        # puede afirmar nada (ni "sin promocion" ni "el precio mas bajo") -> no tocar celdas.
+        # Lo leido ya quedo en el cache; la siguiente corrida solo pide lo que falta.
+        leidas = len(visibles) - len(errores_vision)
+        print(f"  Lectura INCOMPLETA: {leidas} de {len(visibles)} imagenes leidas "
+              f"-> sus celdas NO se tocan en esta corrida")
         return {"competidor": nombre, "estado": "FALLO", "vigentes": [],
-                "notas": notas + [f"vision: {e}" for e in errores_vision]}
+                "notas": notas + [f"lectura incompleta: {leidas} de {len(visibles)}"]
+                + [f"vision: {e}" for e in errores_vision]}
     estado = "VIGENTE" if vigentes else "SIN_PROMO"
     return {"competidor": nombre, "estado": estado, "vigentes": vigentes,
             "notas": notas + [f"vision FALLO: {e}" for e in errores_vision],
@@ -543,18 +621,25 @@ def main():
 
     con_vision = "--sin-vision" not in args
     solo_consultar = "--solo-consultar" in args or not con_vision
-    print(f"=== 1) Consultando 2 competidores (hoy {hoy.isoformat()}; "
-          f"vision {'SI' if con_vision else 'NO'}) ===")
+    activos = {n: d for n, d in COMPETIDORES.items() if d.get("activo", True)}
+    inactivos = [n for n in COMPETIDORES if n not in activos]
+    print(f"=== 1) Consultando {len(activos)} competidor(es): {', '.join(activos)} "
+          f"(hoy {hoy.isoformat()}; vision {'SI' if con_vision else 'NO'}) ===")
+    if inactivos:
+        print(f"    Desactivado(s), no se consulta(n) ni se toca(n) sus celdas: "
+              f"{', '.join(inactivos)}")
     cache = _cargar_cache()
     resultados = [consultar_competidor(n, d, con_vision, cache, hoy)
-                  for n, d in COMPETIDORES.items()]
+                  for n, d in activos.items()]
     if con_vision:
         _guardar_cache(cache)
 
     print("\n=== Resumen ===")
     for r in resultados:
         if r["estado"] == "FALLO":
-            print(f"  {r['competidor']:<9} FALLO -> celdas no se tocan")
+            motivo = next((n for n in r["notas"] if n.startswith("lectura incompleta")),
+                          "sin conexion")
+            print(f"  {r['competidor']:<9} FALLO ({motivo}) -> celdas no se tocan")
         elif not con_vision:
             print(f"  {r['competidor']:<9} conexion OK: {r['visibles']} imagen(es) visible(s) "
                   f"de {r['total']} (sin vision no se decide vigencia)")
