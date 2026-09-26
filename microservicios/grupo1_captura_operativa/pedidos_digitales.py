@@ -51,7 +51,30 @@ Fuera de zona o Google caido = se rechaza y no se escribe nada.
 Duplicados: cada pedido trae un 'id_mensaje' unico (el ID del mensaje de
 WhatsApp que confirmo el pedido). Queda anotado en RegistroEventos; si el
 mismo id llega otra vez (reintento del webhook), no se escribe nada.
+
+Forma de pago (decision del usuario, 27-sep-2026): el cliente elige en el bot
+"Efectivo" o "SINPE Movil" y la forma de pago llega JUNTO con la comanda.
+Es OBLIGATORIA: un pedido sin forma de pago (o con otra) se rechaza sin
+escribir nada. Las lineas solo se pueden quitar en la conversacion, ANTES
+de "Pedido confirmado"; despues ya no se tocan lineas sueltas.
+
+Anulacion (#7, Regla #30, 27-sep-2026) -- solo la ADMINISTRACION (SaaS), el
+bot nunca anula. Una comanda es una unidad: "si pide 3 articulos paga 3".
+    anular_pedido_digital('WA-119', 'El cliente no lo recibio')
+  - 'Interface digital': fila NUEVA 'WA-119-A' con los montos en NEGATIVO
+    (comanda + envio), ESTADO "CONFIRMADO" y la FECHA del pedido original.
+    Asi 'Flujo caja diario' (SUMIFS por fecha con CONFIRMADO) resta el pedido
+    ese mismo dia en "Ventas digitales" y en "Envios cobrados".
+  - 'Detalle comanda digital': filas de RASTRO 'WA-119-A' con ESTADO
+    "ANULADO". NO devuelven inventario: 'Control de Inventario' E solo suma
+    las lineas CONFIRMADO, y la linea original sigue CONFIRMADO (los
+    alimentos que salen de la panaderia no se reciben de vuelta).
+  - El registro original NO se modifica (queda el rastro contable).
+  - Se rechaza (sin escribir nada): pedido pagado por SINPE Movil (pago en
+    firme), pedido inexistente, pedido ya anulado, una fila de anulacion o
+    un motivo vacio.
 """
+import unicodedata
 from datetime import datetime, time
 
 from conexion_drive import editar_excel
@@ -72,6 +95,9 @@ CONFIRMADO, ANULADO = "CONFIRMADO", "ANULADO"
 TIPO_EVENTO = "PEDIDO_DIGITAL"
 HOJA_NODO = "NODO INTEGRAL"
 ETIQUETA_MINUTOS, ETIQUETA_KM = "Tiempo Estimado Delivery", "Distancia Delivery (KM)"
+EFECTIVO, SINPE = "Efectivo", "SINPE M\u00f3vil"          # los 2 valores que se escriben en METODO_PAGO
+SUFIJO_ANULACION = "-A"                                   # WA-119 -> WA-119-A
+TIPO_EVENTO_ANULACION = "ANULACION_PEDIDO"
 
 
 class FueraDeZona(Exception):
@@ -85,6 +111,41 @@ class FueraDeZona(Exception):
 
 class TotalCambio(Exception):
     """El total a registrar no coincide con el que se le mostro al cliente."""
+
+
+class MetodoPagoInvalido(ValueError):
+    """Falta la forma de pago o no es 'Efectivo' / 'SINPE Movil'."""
+
+
+class AnulacionNoPermitida(Exception):
+    """La anulacion va contra una regla del negocio (no se escribe nada)."""
+
+
+# ----------------------------------------------------------------------------
+# Forma de pago
+# ----------------------------------------------------------------------------
+def _texto_simple(valor):
+    """'  SINPE  Móvil ' -> 'sinpe movil' (sin tildes, minusculas, un espacio)."""
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return " ".join(texto.lower().split())
+
+
+def normalizar_metodo_pago(valor):
+    """Devuelve 'Efectivo' o 'SINPE Móvil' (escritura unica). Si no, MetodoPagoInvalido."""
+    texto = _texto_simple(valor)
+    if texto == "efectivo":
+        return EFECTIVO
+    if texto in ("sinpe", "sinpe movil"):
+        return SINPE
+    raise MetodoPagoInvalido(
+        f"Forma de pago invalida: {valor!r}. Debe ser '{EFECTIVO}' o '{SINPE}'. No se escribio nada."
+    )
+
+
+def _es_sinpe(valor):
+    """Para filas YA escritas: vacio o 'Efectivo' = no es SINPE (pedidos viejos de prueba)."""
+    return _texto_simple(valor).startswith("sinpe")
 
 
 # ----------------------------------------------------------------------------
@@ -277,9 +338,12 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
                   Sin ubicacion ni km = retiro en el local (envio 0).
     total_cotizado: el total que se le mostro al cliente (cotizar_pedido). Si
                   ya no coincide, se lanza TotalCambio y no se escribe nada.
+    metodo_pago:  OBLIGATORIO, 'Efectivo' o 'SINPE Movil' (lo elige el cliente en
+                  el bot y llega con la comanda). Si falta: MetodoPagoInvalido.
     """
     if not id_mensaje:
         raise ValueError("Falta id_mensaje: sin el no se pueden detectar pedidos duplicados.")
+    metodo_pago = normalizar_metodo_pago(metodo_pago)    # rechaza antes de abrir el Excel
     momento = a_hora_local(momento) if momento else ahora_local()
     fecha = datetime(momento.year, momento.month, momento.day)
     hora = time(momento.hour, momento.minute, momento.second)
@@ -352,33 +416,145 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
                 "fila_resumen": fila_resumen, "filas_detalle": filas_detalle,
                 "subtotal_bruto": pedido["subtotal_bruto"], "descuento_total": pedido["descuento_total"],
                 "envio": pedido["envio"], "total": pedido["total"],
+                "metodo_pago": metodo_pago,          # para que la comanda diga como paga el cliente
                 "km": info["km"], "minutos": info["minutos"], "origen_envio": info["origen"],
                 "lineas": [(l["cantidad"], l["nombre"], l["subtotal"]) for l in pedido["lineas"]]}
 
     return editar_excel(_editar, descripcion=f"Pedido digital {id_mensaje}")
 
 
-def anular_linea_pedido_digital(id_pedido, producto):
-    """Anula UNA linea de un pedido (ESTADO -> 'ANULADO' en Detalle comanda digital).
+def _numero(valor, columna, id_pedido):
+    """Monto de una celda: vacio = 0; texto u otra cosa = error (no se adivina)."""
+    if valor is None or valor == "":
+        return 0.0
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        raise ValueError(f"{id_pedido}: la columna {columna} no tiene un numero ({valor!r}). No se escribio nada.")
+    return float(valor)
 
-    Segun el mapa, solo cambia esa linea: las demas lineas y la fila de
-    'Interface digital' no se tocan.
+
+def _negativo(monto):
+    """-monto redondeado; el '+ 0.0' evita que un 0 quede escrito como -0.0."""
+    return round(-monto, 2) + 0.0
+
+
+def anular_pedido_digital(id_pedido, motivo, momento=None, origen="SaaS"):
+    """Anula la COMANDA COMPLETA (solo la administracion). Ver el encabezado del archivo.
+
+    id_pedido: el ID original, p. ej. 'WA-119'
+    motivo:    texto obligatorio (queda en DETALLE_COMANDA y en RegistroEventos)
     """
-    def _editar(wb, wb_valores):
-        nombre = Catalogo(wb_valores).resolver(producto, permitir_combo_inactivo=True)["nombre"]
-        ws, tabla = obtener_tabla(wb, HOJA_DETALLE, TABLA_DETALLE)
-        letra_estado = columnas_de_tabla(tabla)["ESTADO"]
-        for linea in leer_tabla(ws, tabla):
-            if linea.get("ID_PEDIDO") == id_pedido and linea.get("PRODUCTO") == nombre:
-                if linea.get("ESTADO") == ANULADO:
-                    continue
-                ws[f"{letra_estado}{linea['_fila']}"] = ANULADO
-                registrar_evento(
-                    wb, modulo="Pedidos digitales", tipo_evento="ANULACION_LINEA",
-                    entidad="Tabla3", id_entidad=id_pedido, accion="UPDATE ESTADO", estado=ANULADO,
-                    detalle=f"{linea.get('CANTIDAD')} x {nombre} (fila {linea['_fila']})",
-                )
-                return {"hubo_cambios": True, "estado": "ANULADA", "fila": linea["_fila"]}
-        raise LookupError(f"No hay una linea CONFIRMADA de '{nombre}' en el pedido {id_pedido}.")
+    id_pedido = str(id_pedido or "").strip()
+    motivo = " ".join(str(motivo or "").split())
+    if not id_pedido:
+        raise ValueError("Falta el id_pedido a anular.")
+    if not motivo:
+        raise AnulacionNoPermitida("Falta el motivo de la anulacion. No se escribio nada.")
+    if id_pedido.endswith(SUFIJO_ANULACION):
+        raise AnulacionNoPermitida(f"{id_pedido} es una fila de anulacion: no se puede anular. No se escribio nada.")
+    id_anulacion = id_pedido + SUFIJO_ANULACION
+    momento = a_hora_local(momento) if momento else ahora_local()
+    hora = time(momento.hour, momento.minute, momento.second)
 
-    return editar_excel(_editar, descripcion=f"Anular {producto} en {id_pedido}")
+    def _editar(wb, wb_valores):
+        ws_i, tabla_i = obtener_tabla(wb, HOJA_INTERFACE, TABLA_INTERFACE)
+        ws_d, tabla_d = obtener_tabla(wb, HOJA_DETALLE, TABLA_DETALLE)
+        col_i = columnas_de_tabla(tabla_i)
+        col_d = columnas_de_tabla(tabla_d)
+        val_i, val_d = wb_valores[HOJA_INTERFACE], wb_valores[HOJA_DETALLE]   # montos ya calculados
+
+        filas_i = leer_tabla(ws_i, tabla_i)
+        if any(str(f.get("ID_PEDIDO") or "").strip() == id_anulacion for f in filas_i):
+            raise AnulacionNoPermitida(f"El pedido {id_pedido} ya estaba anulado ({id_anulacion}). No se escribio nada.")
+        original = next((f for f in filas_i if str(f.get("ID_PEDIDO") or "").strip() == id_pedido), None)
+        if original is None:
+            raise LookupError(f"No existe el pedido {id_pedido} en '{HOJA_INTERFACE}'. No se escribio nada.")
+
+        def valor_i(columna):
+            return val_i[f"{col_i[columna]}{original['_fila']}"].value
+
+        if valor_i("ESTADO") != CONFIRMADO:
+            raise AnulacionNoPermitida(
+                f"El pedido {id_pedido} no esta CONFIRMADO (estado {valor_i('ESTADO')!r}): no suma en el flujo, "
+                f"no hay nada que anular. No se escribio nada.")
+        metodo = valor_i("METODO_PAGO")
+        if _es_sinpe(metodo):
+            raise AnulacionNoPermitida(
+                f"El pedido {id_pedido} se pago por {metodo}: el pago es en firme y no se anula (Regla #30). "
+                f"No se escribio nada.")
+
+        subtotal = _numero(valor_i("SUBTOTAL_BRUTO"), "SUBTOTAL_BRUTO", id_pedido)
+        descuento = _numero(valor_i("DESCUENTO_TOTAL"), "DESCUENTO_TOTAL", id_pedido)
+        envio = _numero(valor_i("ENVIO_MAPS"), "ENVIO_MAPS", id_pedido)
+        total = _numero(valor_i("TOTAL_A_COBRAR"), "TOTAL_A_COBRAR", id_pedido)
+
+        # Lineas CONFIRMADAS del pedido original (las que rebajaron inventario)
+        lineas = []
+        for linea in leer_tabla(ws_d, tabla_d):
+            if str(linea.get("ID_PEDIDO") or "").strip() != id_pedido:
+                continue
+            fila = linea["_fila"]
+            if val_d[f"{col_d['ESTADO']}{fila}"].value != CONFIRMADO:
+                continue
+            lineas.append({columna: val_d[f"{letra}{fila}"].value for columna, letra in col_d.items()})
+
+        # 1) Interface digital: fila negativa, CONFIRMADO, fecha ORIGINAL
+        fila_resumen = agregar_fila(ws_i, tabla_i, {
+            "ID_PEDIDO": id_anulacion,
+            "FECHA": valor_i("FECHA"),
+            "HORA": hora,
+            "FUENTE": valor_i("FUENTE"),
+            "CLIENTE": valor_i("CLIENTE"),
+            "DETALLE_COMANDA": f"ANULADO: {motivo} (anula {id_pedido})",
+            "SUBTOTAL_BRUTO": _negativo(subtotal),
+            "DESCUENTO_TOTAL": _negativo(descuento),
+            "ENVIO_MAPS": _negativo(envio),
+            "TOTAL_A_COBRAR": _negativo(total),
+            "METODO_PAGO": metodo,
+            "ESTADO": CONFIRMADO,
+            "CODIGO_OFERTA": valor_i("CODIGO_OFERTA"),
+        }, columnas_clave=["ID_PEDIDO"])
+
+        # 2) Detalle comanda digital: rastro ANULADO (no devuelve inventario)
+        filas_detalle = []
+        for linea in lineas:
+            filas_detalle.append(agregar_fila(ws_d, tabla_d, {
+                "ID_PEDIDO": id_anulacion,
+                "FECHA": linea.get("FECHA"),
+                "PRODUCTO": linea.get("PRODUCTO"),
+                "CANTIDAD": linea.get("CANTIDAD"),
+                "ESTADO": ANULADO,
+                "SUBTOTAL_LINEA": _negativo(_numero(linea.get("SUBTOTAL_LINEA"), "SUBTOTAL_LINEA", id_pedido)),
+                "CODIGO_OFERTA": linea.get("CODIGO_OFERTA"),
+                "TIPO_DETONADOR": linea.get("TIPO_DETONADOR"),
+                "DESCUENTO_ASIGNADO": linea.get("DESCUENTO_ASIGNADO"),
+            }, columnas_clave=["ID_PEDIDO"]))
+
+        # 3) Evento
+        registrar_evento(
+            wb, modulo="Pedidos digitales", tipo_evento=TIPO_EVENTO_ANULACION, entidad="TablaInterfaceDigital",
+            id_entidad=id_anulacion, accion="INSERT", estado=ANULADO, origen=origen,
+            valor_referencia=_negativo(total),
+            detalle=(f"anula={id_pedido} | motivo={motivo} | pago={metodo or 'sin dato'} | "
+                     f"{len(filas_detalle)} lineas de rastro (sin devolver inventario)"),
+        )
+        return {"hubo_cambios": True, "estado": "ANULADO", "id_pedido": id_pedido,
+                "id_anulacion": id_anulacion, "fila_resumen": fila_resumen, "filas_detalle": filas_detalle,
+                "total_revertido": _negativo(total), "envio_revertido": _negativo(envio)}
+
+    return editar_excel(_editar, descripcion=f"Anular pedido {id_pedido}")
+
+
+def anular_linea_pedido_digital(id_pedido, producto):
+    """YA NO SE USA (se conserva para que nadie reciba un error de 'funcion inexistente').
+
+    Antes cambiaba el ESTADO de UNA linea a 'ANULADO'. Decision del usuario
+    (Regla #30, 26-sep-2026): una comanda es una unidad; las lineas solo se
+    quitan en la conversacion ANTES de "Pedido confirmado". Despues, la
+    administracion anula la comanda completa con anular_pedido_digital().
+    Responde SIEMPRE con un rechazo y no toca el Excel.
+    """
+    raise AnulacionNoPermitida(
+        f"No se anulan lineas sueltas ({producto} en {id_pedido}). Las lineas solo se quitan antes de "
+        f"'Pedido confirmado'; despues, la administracion anula la comanda completa con "
+        f"anular_pedido_digital(). No se escribio nada."
+    )
