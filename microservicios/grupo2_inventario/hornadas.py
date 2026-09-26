@@ -7,8 +7,10 @@ Un solo registro del panadero en el SaaS hace TODO esto en el mismo guardado
      la cantidad (G4), la fecha (C7) y la hora (C5 / C6), y limpia G2.
      Asi la receta calcula el costo real de esa hornada.
   2. 'Historico Diario': agrega UNA fila nueva con los 9 valores ya calculados
-     (nunca formulas), con el nombre que busca 'flujo caja anual'
-     ('pan baguette' / 'cupcakes', tomado de la celda A6 de la hoja de costo).
+     (nunca formulas), con el nombre que busca 'flujo caja anual', tomado de la
+     celda A6 de la hoja de costo. Desde la migracion m008 (26-sep-2026) A6 dice el
+     nombre de la TABLA CRUCE MAESTRA ('Baguette' / 'CupCake'): un solo nombre por
+     producto en todo el documento (antes: 'pan baguette' / 'cupcakes').
   3. 'Ingreso de Inventario': agrega la produccion propia con el nombre de la
      tabla maestra ('Baguette' / 'CupCake'), para que sume al inventario.
   4. 'Consumo de Materia Prima' (migracion m002): una fila por cada materia prima
@@ -40,6 +42,7 @@ HOJAS_COSTO = {
     "Pa01": {"hoja": "costo cupcakes", "fecha": "C7", "hora": "C6", "cantidad": "G4",
              "anulada": "G2", "nombre": "A6", "costo": "D37", "precio": "G27"},
 }
+# Se aceptan tambien los nombres viejos ('pan baguette' / 'cupcakes', antes de la m008).
 SINONIMOS = {"p01": "P01", "baguette": "P01", "pan baguette": "P01",
              "pa01": "Pa01", "cupcake": "Pa01", "cupcakes": "Pa01"}
 
@@ -151,7 +154,7 @@ def registrar_hornada(producto, cantidad, momento=None):
     hora = time(momento.hour, momento.minute)
 
     def _editar(wb, wb_valores):
-        nombre_hist = wb_valores[cfg["hoja"]][cfg["nombre"]].value      # 'pan baguette' / 'cupcakes'
+        nombre_hist = wb_valores[cfg["hoja"]][cfg["nombre"]].value      # A6: 'Baguette' / 'CupCake' (m008)
         nombre_inv = _nombre_maestro(wb_valores, codigo)                # 'Baguette' / 'CupCake'
         ws_h, tabla_h = obtener_tabla(wb, "Historico Diario", "HistoricoHorneadas")
         if _buscar_en_historico(ws_h, tabla_h, fecha, hora, nombre_hist, cantidad):
