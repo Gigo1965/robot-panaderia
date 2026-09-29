@@ -23,6 +23,15 @@ Anular una hornada (anular_hornada):
     queda como rastro y la suma neta queda en cero (inventario y 'flujo caja anual').
 
 Duplicados: misma Fecha + Hora + Producto + Cantidad en 'Historico Diario'.
+
+|| V15 (28-sep-2026, Regla #34, decision del usuario = opcion C): NO HAY HORNADA SIN
+MATERIA PRIMA. Antes de escribir nada, el robot revisa TODAS las materias primas de
+la receta ('Consumo de Materia Prima' TablaRecetaConsumo: ingredientes Y empaques,
+como las bolsas y la burbuja) contra 'Control de Inventario' (Existencia Actual, en
+paquetes). Si alguna no alcanza para la cantidad completa, rechaza la hornada entera
+(MateriaPrimaInsuficiente) y dice que falta y cuanto. No se escribe nada. Anular una
+hornada NUNCA se bloquea (devuelve materia prima). Primero se registra la compra
+(ingreso_inventario.py) y despues se hornea, como en una panaderia real (Regla #10).
 """
 from datetime import datetime, time
 
@@ -52,6 +61,22 @@ HOJA_CONSUMO, TABLA_RECETA, TABLA_CONSUMO = "Consumo de Materia Prima", "TablaRe
 
 class HornadaInvalida(Exception):
     pass
+
+
+class MateriaPrimaInsuficiente(HornadaInvalida):
+    """V15, Regla #34: alguna materia prima de la receta no alcanza. No se escribe nada.
+
+    Hereda de HornadaInvalida: el SaaS la maneja igual (rechazo con mensaje).
+    'faltantes' = [{'materia', 'necesita', 'existencia', 'falta', 'falta_unidad', 'unidad'}] (en paquetes).
+    """
+
+    def __init__(self, cantidad, producto, faltantes):
+        self.cantidad, self.producto, self.faltantes = cantidad, producto, faltantes
+        detalle = "; ".join(
+            f"{f['materia']}: necesita {f['necesita']:g} paquetes, hay {f['existencia']:g} "
+            f"(faltan {f['falta']:g} = {f['falta_unidad']:g} {f['unidad']})" for f in faltantes)
+        super().__init__(f"No alcanza la materia prima para {cantidad} x {producto}: {detalle}. "
+                         "No se escribio nada. Registre primero la compra.")
 
 
 # ----------------------------------------------------------------------------
@@ -111,6 +136,39 @@ def _escribir_consumo(wb, wb_calculado, fecha, lote, codigo, nombre_inv, cantida
     return filas
 
 
+def _revisar_existencias(wb_valores, codigo, nombre, cantidad):
+    """V15, Regla #34: revisa TODA la receta contra 'Control de Inventario' ANTES de escribir.
+
+    Usa la misma receta y el mismo 'Contenido por paquete' que _escribir_consumo, y la
+    'Existencia Actual' (columna F, en paquetes). Si algo no alcanza, lanza
+    MateriaPrimaInsuficiente con la lista completa de faltantes (no solo el primero).
+    """
+    if HOJA_CONSUMO not in wb_valores.sheetnames:
+        raise HornadaInvalida("Falta la hoja 'Consumo de Materia Prima': aplique la migracion m002_consumo_mp.")
+    ctrl = wb_valores["Control de Inventario"]
+    existencia = {str(ctrl.cell(f, 1).value).strip(): ctrl.cell(f, 6).value
+                  for f in range(5, ctrl.max_row + 1) if ctrl.cell(f, 1).value}
+    ws_r, tabla_r = obtener_tabla(wb_valores, HOJA_CONSUMO, TABLA_RECETA)
+    faltantes = []
+    for linea in leer_tabla(ws_r, tabla_r):
+        if str(linea.get("Codigo") or "").strip() != codigo:
+            continue
+        materia = str(linea.get("Materia prima") or "").strip()
+        por_unidad, contenido = linea.get("Cantidad por unidad"), linea.get("Contenido por paquete")
+        if not isinstance(por_unidad, (int, float)) or not isinstance(contenido, (int, float)) or contenido <= 0:
+            raise HornadaInvalida(f"Receta incompleta para {materia}: {por_unidad!r} / {contenido!r}")
+        necesita = round(cantidad * por_unidad / contenido, 4)
+        hay = existencia.get(materia)
+        hay = round(hay, 4) if isinstance(hay, (int, float)) and not isinstance(hay, bool) else 0
+        if necesita > hay + 1e-9:
+            falta = round(necesita - hay, 4)
+            faltantes.append({"materia": materia, "necesita": necesita, "existencia": hay, "falta": falta,
+                              "falta_unidad": round(falta * contenido, 2),
+                              "unidad": str(linea.get("Unidad") or "").strip()})
+    if faltantes:
+        raise MateriaPrimaInsuficiente(cantidad, nombre, faltantes)
+
+
 def _revertir_consumo(wb, fecha, lote_original, lote_correccion):
     ws_c, tabla_c = obtener_tabla(wb, HOJA_CONSUMO, TABLA_CONSUMO)
     originales = [f for f in leer_tabla(ws_c, tabla_c) if f.get("Lote") == lote_original]
@@ -159,6 +217,9 @@ def registrar_hornada(producto, cantidad, momento=None):
         ws_h, tabla_h = obtener_tabla(wb, "Historico Diario", "HistoricoHorneadas")
         if _buscar_en_historico(ws_h, tabla_h, fecha, hora, nombre_hist, cantidad):
             return {"hubo_cambios": False, "estado": "DUPLICADO", "producto": nombre_hist, "cantidad": cantidad}
+
+        # 0) V15, Regla #34: no hay hornada sin materia prima (se revisa ANTES de escribir)
+        _revisar_existencias(wb_valores, codigo, nombre_hist, cantidad)
 
         # 1) Hoja de costo: la receta recalcula con la cantidad nueva
         ws_c = wb[cfg["hoja"]]
