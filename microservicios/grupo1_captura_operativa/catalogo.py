@@ -55,12 +55,17 @@ def _es_si(valor):
 
 
 def leer_reglas_del_dia(wb_valores):
-    """Banderas del dia (NODO INTEGRAL) y el % de descuento general (Interface digital!B5)."""
+    """Banderas del dia (NODO INTEGRAL), el % de descuento general (Interface digital!B5)
+    y el numero SINPE Movil de la panaderia (NODO INTEGRAL, etiqueta 'Número SINPE Móvil', m013)."""
     nodo = wb_valores["NODO INTEGRAL"]
     tarifa = _buscar_valor_por_etiqueta(nodo, "Tarifa Base KM", 2, 3)
     pct = _buscar_valor_por_etiqueta(wb_valores[HOJA_INTERFACE], "Días de Pago o feriado", 1, 2)
     feriado = _es_si(_buscar_valor_por_etiqueta(nodo, "Feriado Activo Hoy", 2, 3))
     dia_pago = _es_si(_buscar_valor_por_etiqueta(nodo, "Día de Pago Activo Hoy", 2, 3))
+    try:                                   # m013 (29-sep-2026): NODO INTEGRAL fila 22, por etiqueta
+        sinpe = _texto(_buscar_valor_por_etiqueta(nodo, "Número SINPE Móvil", 2, 3)) or None
+    except KeyError:                       # copia sin la m013: el bot no muestra numero SINPE
+        sinpe = None
     return {
         "feriado": feriado,
         "dia_pago": dia_pago,
@@ -68,6 +73,7 @@ def leer_reglas_del_dia(wb_valores):
         "detonador_general": "FERIADO" if feriado else ("DIA_PAGO" if dia_pago else None),
         "pct_general": float(pct) if isinstance(pct, (int, float)) else 0.0,
         "tarifa_km": float(tarifa) if isinstance(tarifa, (int, float)) else 0.0,
+        "sinpe_movil": sinpe,                               # numero SINPE de la panaderia (m013)
     }
 
 

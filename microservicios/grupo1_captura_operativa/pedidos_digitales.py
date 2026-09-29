@@ -73,6 +73,20 @@ bot nunca anula. Una comanda es una unidad: "si pide 3 articulos paga 3".
   - Se rechaza (sin escribir nada): pedido pagado por SINPE Movil (pago en
     firme), pedido inexistente, pedido ya anulado, una fila de anulacion o
     un motivo vacio.
+  - V m013 (29-sep-2026): tampoco se anula un pedido YA ENTREGADO (el cliente
+    recibio el pan y pago).
+
+Telefono y entrega (Sesion A del bot, 29-sep-2026; requiere la migracion m013):
+  - #33 opcion B: registrar_pedido_digital(..., telefono='whatsapp:+506...') guarda
+    el numero LIMPIO (+506...) en la columna TELEFONO. Es opcional (el SaaS puede
+    no traerlo); el bot siempre lo manda. El cliente lo acepta en el mensaje #28.
+  - Recibo al entregar, opcion C: marcar_entregado('WA-120') anota la fecha y hora
+    en la columna ENTREGADO y devuelve los DATOS DEL RECIBO. No envia WhatsApp: el
+    bot envia el recibo (hoy por el comando 'ENTREGADO WA-120' de un numero
+    autorizado; despues, el boton de administracion del SaaS llama esta misma
+    funcion). ESTADO no cambia (sigue CONFIRMADO): 'Flujo caja diario' y 'Control
+    de Inventario' suman solo CONFIRMADO. Si ya estaba entregado, no escribe nada
+    (estado YA_ENTREGADO) y el cliente no recibe dos recibos.
 """
 import unicodedata
 from datetime import datetime, time
@@ -98,6 +112,9 @@ ETIQUETA_MINUTOS, ETIQUETA_KM = "Tiempo Estimado Delivery", "Distancia Delivery 
 EFECTIVO, SINPE = "Efectivo", "SINPE M\u00f3vil"          # los 2 valores que se escriben en METODO_PAGO
 SUFIJO_ANULACION = "-A"                                   # WA-119 -> WA-119-A
 TIPO_EVENTO_ANULACION = "ANULACION_PEDIDO"
+TIPO_EVENTO_ENTREGA = "ENTREGA_PEDIDO"
+COL_TELEFONO, COL_ENTREGADO = "TELEFONO", "ENTREGADO"     # columnas nuevas de la m013
+FORMATO_ENTREGADO = "d-mmm hh:mm"
 
 
 class FueraDeZona(Exception):
@@ -119,6 +136,31 @@ class MetodoPagoInvalido(ValueError):
 
 class AnulacionNoPermitida(Exception):
     """La anulacion va contra una regla del negocio (no se escribe nada)."""
+
+
+class EntregaNoPermitida(Exception):
+    """El pedido no se puede marcar como entregado (no se escribe nada)."""
+
+
+class TelefonoInvalido(ValueError):
+    """El telefono no tiene forma de numero (+ y digitos)."""
+
+
+# ----------------------------------------------------------------------------
+# Telefono (#33 opcion B)
+# ----------------------------------------------------------------------------
+def normalizar_telefono(valor):
+    """'whatsapp:+506 8888-7777' -> '+50688887777'. Vacio -> None. Otra cosa -> TelefonoInvalido."""
+    texto = str(valor or "").strip()
+    if texto.lower().startswith("whatsapp:"):
+        texto = texto[len("whatsapp:"):]
+    texto = "".join(texto.split()).replace("-", "")
+    if not texto:
+        return None
+    cuerpo = texto[1:] if texto.startswith("+") else texto
+    if not cuerpo.isdigit() or not 8 <= len(cuerpo) <= 15:
+        raise TelefonoInvalido(f"Telefono invalido: {valor!r}. No se escribio nada.")
+    return "+" + cuerpo if texto.startswith("+") else cuerpo
 
 
 # ----------------------------------------------------------------------------
@@ -325,7 +367,7 @@ def cotizar_pedido(lineas, ubicacion=None, distancia_km=None, minutos_entrega=No
 def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
                              ubicacion=None, distancia_km=None, minutos_entrega=None,
                              total_cotizado=None, momento=None,
-                             fuente="WhatsApp", prefijo_id="WA-"):
+                             fuente="WhatsApp", prefijo_id="WA-", telefono=None):
     """Registra un pedido confirmado en 'Interface digital' + 'Detalle comanda digital'.
 
     lineas:       [{'producto': 'P01', 'cantidad': 3}, {'producto': 'co02', 'cantidad': 1}]
@@ -340,10 +382,13 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
                   ya no coincide, se lanza TotalCambio y no se escribe nada.
     metodo_pago:  OBLIGATORIO, 'Efectivo' o 'SINPE Movil' (lo elige el cliente en
                   el bot y llega con la comanda). Si falta: MetodoPagoInvalido.
+    telefono:     OPCIONAL (m013, #33 opcion B). El del cliente, tal como lo manda
+                  Twilio ('whatsapp:+506...'); se guarda limpio en TELEFONO.
     """
     if not id_mensaje:
         raise ValueError("Falta id_mensaje: sin el no se pueden detectar pedidos duplicados.")
     metodo_pago = normalizar_metodo_pago(metodo_pago)    # rechaza antes de abrir el Excel
+    telefono = normalizar_telefono(telefono)             # idem
     momento = a_hora_local(momento) if momento else ahora_local()
     fecha = datetime(momento.year, momento.month, momento.day)
     hora = time(momento.hour, momento.minute, momento.second)
@@ -366,7 +411,7 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
         id_pedido = _siguiente_id_pedido(ws_i, tabla_i, prefijo_id)
         codigos_oferta = sorted({l["codigo_oferta"] for l in pedido["lineas"] if l["codigo_oferta"]})
 
-        fila_resumen = agregar_fila(ws_i, tabla_i, {
+        valores_resumen = {
             "ID_PEDIDO": id_pedido,
             "FECHA": fecha,
             "HORA": hora,
@@ -382,7 +427,10 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
             "ESTADO": CONFIRMADO,
             "DISTANCIA_KM": info["km"],
             "CODIGO_OFERTA": ", ".join(codigos_oferta) or None,
-        }, columnas_clave=["ID_PEDIDO"])
+        }
+        if telefono:                     # solo si llega (asi sirve tambien con copias sin la m013)
+            valores_resumen[COL_TELEFONO] = telefono
+        fila_resumen = agregar_fila(ws_i, tabla_i, valores_resumen, columnas_clave=["ID_PEDIDO"])
 
         filas_detalle = []
         for linea in pedido["lineas"]:
@@ -417,6 +465,7 @@ def registrar_pedido_digital(lineas, id_mensaje, cliente=None, metodo_pago=None,
                 "subtotal_bruto": pedido["subtotal_bruto"], "descuento_total": pedido["descuento_total"],
                 "envio": pedido["envio"], "total": pedido["total"],
                 "metodo_pago": metodo_pago,          # para que la comanda diga como paga el cliente
+                "telefono": telefono,
                 "km": info["km"], "minutos": info["minutos"], "origen_envio": info["origen"],
                 "lineas": [(l["cantidad"], l["nombre"], l["subtotal"]) for l in pedido["lineas"]]}
 
@@ -481,6 +530,10 @@ def anular_pedido_digital(id_pedido, motivo, momento=None, origen="SaaS"):
             raise AnulacionNoPermitida(
                 f"El pedido {id_pedido} se pago por {metodo}: el pago es en firme y no se anula (Regla #30). "
                 f"No se escribio nada.")
+        if COL_ENTREGADO in col_i and valor_i(COL_ENTREGADO) not in (None, ""):
+            raise AnulacionNoPermitida(
+                f"El pedido {id_pedido} ya fue ENTREGADO ({valor_i(COL_ENTREGADO)}): el cliente recibio el "
+                f"pedido y pago; no se anula (decision del usuario, 29-sep-2026). No se escribio nada.")
 
         subtotal = _numero(valor_i("SUBTOTAL_BRUTO"), "SUBTOTAL_BRUTO", id_pedido)
         descuento = _numero(valor_i("DESCUENTO_TOTAL"), "DESCUENTO_TOTAL", id_pedido)
@@ -542,6 +595,89 @@ def anular_pedido_digital(id_pedido, motivo, momento=None, origen="SaaS"):
                 "total_revertido": _negativo(total), "envio_revertido": _negativo(envio)}
 
     return editar_excel(_editar, descripcion=f"Anular pedido {id_pedido}")
+
+
+def marcar_entregado(id_pedido, momento=None, origen="WhatsApp"):
+    """Marca un pedido como ENTREGADO y devuelve los datos del recibo (m013, opcion C).
+
+    Funcion COMPARTIDA: hoy la llama el bot (comando 'ENTREGADO WA-120' de un numero
+    autorizado) y despues la llamara el boton de administracion del SaaS. NO envia
+    WhatsApp: quien la llama envia el recibo con los datos que devuelve.
+
+    - Escribe SOLO la fecha y hora en la columna ENTREGADO (ESTADO no cambia) y un
+      evento ENTREGA_PEDIDO en RegistroEventos.
+    - Si ya estaba entregado: no escribe nada, estado 'YA_ENTREGADO'.
+    - Rechaza (sin escribir nada): pedido inexistente (LookupError), fila de
+      anulacion, pedido anulado o no CONFIRMADO (EntregaNoPermitida).
+    """
+    id_pedido = str(id_pedido or "").strip().upper()
+    if not id_pedido:
+        raise ValueError("Falta el id_pedido a marcar como entregado.")
+    if id_pedido.endswith(SUFIJO_ANULACION):
+        raise EntregaNoPermitida(f"{id_pedido} es una fila de anulacion: no se entrega. No se escribio nada.")
+    momento = a_hora_local(momento) if momento else ahora_local()
+    entregado_en = datetime(momento.year, momento.month, momento.day, momento.hour, momento.minute, momento.second)
+
+    def _editar(wb, wb_valores):
+        ws_i, tabla_i = obtener_tabla(wb, HOJA_INTERFACE, TABLA_INTERFACE)
+        ws_d, tabla_d = obtener_tabla(wb, HOJA_DETALLE, TABLA_DETALLE)
+        col_i, col_d = columnas_de_tabla(tabla_i), columnas_de_tabla(tabla_d)
+        if COL_ENTREGADO not in col_i or COL_TELEFONO not in col_i:
+            raise EntregaNoPermitida(
+                f"'{HOJA_INTERFACE}' no tiene las columnas {COL_TELEFONO}/{COL_ENTREGADO}: falta aplicar la "
+                "migracion m013. No se escribio nada.")
+        val_i, val_d = wb_valores[HOJA_INTERFACE], wb_valores[HOJA_DETALLE]
+
+        filas_i = leer_tabla(ws_i, tabla_i)
+        original = next((f for f in filas_i if str(f.get("ID_PEDIDO") or "").strip().upper() == id_pedido), None)
+        if original is None:
+            raise LookupError(f"No existe el pedido {id_pedido} en '{HOJA_INTERFACE}'. No se escribio nada.")
+        if any(str(f.get("ID_PEDIDO") or "").strip().upper() == id_pedido + SUFIJO_ANULACION for f in filas_i):
+            raise EntregaNoPermitida(f"El pedido {id_pedido} fue ANULADO: no se entrega. No se escribio nada.")
+        fila = original["_fila"]
+
+        def valor_i(columna):
+            return val_i[f"{col_i[columna]}{fila}"].value
+
+        if valor_i("ESTADO") != CONFIRMADO:
+            raise EntregaNoPermitida(
+                f"El pedido {id_pedido} no esta CONFIRMADO (estado {valor_i('ESTADO')!r}). No se escribio nada.")
+
+        lineas = []
+        for linea in leer_tabla(ws_d, tabla_d):
+            f = linea["_fila"]
+            if (str(linea.get("ID_PEDIDO") or "").strip().upper() == id_pedido
+                    and val_d[f"{col_d['ESTADO']}{f}"].value == CONFIRMADO):
+                lineas.append((val_d[f"{col_d['CANTIDAD']}{f}"].value, val_d[f"{col_d['PRODUCTO']}{f}"].value,
+                               _numero(val_d[f"{col_d['SUBTOTAL_LINEA']}{f}"].value, "SUBTOTAL_LINEA", id_pedido)))
+        recibo = {
+            "id_pedido": id_pedido,
+            "cliente": valor_i("CLIENTE"),
+            "telefono": valor_i(COL_TELEFONO),
+            "fecha": valor_i("FECHA"),
+            "lineas": lineas,
+            "subtotal_bruto": _numero(valor_i("SUBTOTAL_BRUTO"), "SUBTOTAL_BRUTO", id_pedido),
+            "descuento_total": _numero(valor_i("DESCUENTO_TOTAL"), "DESCUENTO_TOTAL", id_pedido),
+            "envio": _numero(valor_i("ENVIO_MAPS"), "ENVIO_MAPS", id_pedido),
+            "total": _numero(valor_i("TOTAL_A_COBRAR"), "TOTAL_A_COBRAR", id_pedido),
+            "metodo_pago": valor_i("METODO_PAGO"),
+        }
+
+        celda = ws_i[f"{col_i[COL_ENTREGADO]}{fila}"]
+        if celda.value not in (None, ""):
+            return {"hubo_cambios": False, "estado": "YA_ENTREGADO", "entregado_en": celda.value, **recibo}
+        celda.value = entregado_en
+        celda.number_format = FORMATO_ENTREGADO
+        registrar_evento(
+            wb, modulo="Pedidos digitales", tipo_evento=TIPO_EVENTO_ENTREGA, entidad="TablaInterfaceDigital",
+            id_entidad=id_pedido, accion="UPDATE", estado="ENTREGADO", origen=origen,
+            valor_referencia=recibo["total"],
+            detalle=(f"entregado={entregado_en:%Y-%m-%d %H:%M:%S} | pago={recibo['metodo_pago'] or 'sin dato'} | "
+                     f"recibo={'si (hay telefono)' if recibo['telefono'] else 'no (sin telefono)'}"),
+        )
+        return {"hubo_cambios": True, "estado": "ENTREGADO", "entregado_en": entregado_en, **recibo}
+
+    return editar_excel(_editar, descripcion=f"Entregar pedido {id_pedido}")
 
 
 def anular_linea_pedido_digital(id_pedido, producto):
