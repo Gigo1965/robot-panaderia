@@ -1,4 +1,8 @@
-"""
+"""OBSOLETO (29-sep-2026): el bot ya NO usa plantillas de Twilio. Decision del usuario:
+MENUS NUMERADOS leidos del Excel en el momento (el catalogo cambia cada dia y las
+plantillas son fijas). Se conserva solo como historia; no hace falta correrlo.
+
+
 Script de configuración inicial -- se corre UNA sola vez (o cada vez
 que cambie el catálogo de productos) para crear las plantillas de
 contenido (Content Templates) que Twilio necesita para enviar listas

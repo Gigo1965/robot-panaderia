@@ -1,54 +1,52 @@
-"""
-Configuración central del bot de WhatsApp.
+"""Configuracion del bot de WhatsApp (version 29-sep-2026, Sesion A del bot).
 
-Todo se lee de variables de entorno -- nunca se escriben credenciales
-directo en el código. Para desarrollo local, crea un archivo .env
-(ver .env.example) y cárgalo con `python-dotenv` o exportando las
-variables en tu terminal antes de correr app.py.
-"""
+Todo lo secreto o personal se lee del archivo .env de la RAIZ del proyecto
+(ROBOT PANADERO\\.env), igual que conexion_drive. Nunca se escriben claves ni
+telefonos reales en el codigo ni en GitHub.
 
+Los datos del NEGOCIO (productos, precios, combos, SINPE, promocion del dia)
+NO viven aqui: el bot los lee del Excel maestro en el momento (Regla #4, #16).
+"""
 import os
+from pathlib import Path
 
-# --- Credenciales de Twilio (obligatorias) ---
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+from dotenv import load_dotenv
 
-# Número de WhatsApp del negocio, formato "whatsapp:+506XXXXXXXX".
-# Mientras se usa el Sandbox de pruebas de Twilio, este es el número
-# de sandbox que Twilio te asigna (ver README.md).
-TWILIO_WHATSAPP_FROM = os.environ.get("TWILIO_WHATSAPP_FROM", "")
+RAIZ_PROYECTO = Path(__file__).resolve().parent.parent
+load_dotenv(RAIZ_PROYECTO / ".env")          # no sobrescribe variables que ya existan
 
-# --- IDs de las plantillas de contenido (Content Templates) ---
-# Estos IDs (empiezan con "HX...") se generan UNA SOLA VEZ corriendo
-# setup_content_templates.py, y de ahí se copian aquí o a las
-# variables de entorno reales del servidor.
-CONTENT_SID_MENU_PRINCIPAL = os.environ.get("CONTENT_SID_MENU_PRINCIPAL", "")
-CONTENT_SID_LISTA_PRODUCTOS = os.environ.get("CONTENT_SID_LISTA_PRODUCTOS", "")
-CONTENT_SID_LISTA_COMBOS = os.environ.get("CONTENT_SID_LISTA_COMBOS", "")
-CONTENT_SID_CONFIRMAR_PEDIDO = os.environ.get("CONTENT_SID_CONFIRMAR_PEDIDO", "")
-CONTENT_SID_AGREGAR_MAS = os.environ.get("CONTENT_SID_AGREGAR_MAS", "")
 
-# --- Catálogo de productos propios (Baguette y Cupcakes) ---
-# NOTA IMPORTANTE (ver Reglas_Globales_del_Proyecto, Regla #4): esto es
-# solo el catálogo para MOSTRAR el menú al cliente. El precio final
-# que se escribe en el pedido SIEMPRE debe leerse en el momento real
-# desde el Excel maestro (via Microsoft Graph API) -- nunca de aquí
-# directamente -- porque el precio puede cambiar. Esta lista es solo
-# para armar la plantilla de WhatsApp (id, nombre visible, descripción).
-PRODUCTOS_PROPIOS = [
-    {"id": "PROD_BAGUETTE", "titulo": "Pan Baguette", "descripcion": "Pan artesanal recién horneado"},
-    {"id": "PROD_CUPCAKES", "titulo": "Cupcakes", "descripcion": "Cupcakes decorados, unidad"},
-]
+def _leer(nombre, defecto=""):
+    return (os.environ.get(nombre) or defecto).strip()
 
-# Catálogo de productos de terceros (Musmanni-style: reventa de otras marcas)
-PRODUCTOS_TERCEROS = [
-    {"id": "PROD_LECHE", "titulo": "Leche", "descripcion": "Leche Dos Pinos semidescremada 1L"},
-    {"id": "PROD_QUESO", "titulo": "Queso", "descripcion": "Queso Zarcero fresco semiduro"},
-    {"id": "PROD_MARGARINA", "titulo": "Margarina", "descripcion": "Margarina Numar"},
-    {"id": "PROD_COCACOLA", "titulo": "Coca Cola", "descripcion": "Refresco 600ml"},
-    {"id": "PROD_NATILLA", "titulo": "Natilla", "descripcion": "Natilla Dos Pinos"},
-]
 
-# Tiempo, en segundos, que se mantiene abierta una conversación sin
-# actividad antes de considerarla "abandonada" y limpiar su estado.
-CONVERSACION_TIMEOUT_SEGUNDOS = 30 * 60  # 30 minutos
+# --- Credenciales de Twilio (en el .env; nunca en el chat ni en GitHub) ---
+TWILIO_ACCOUNT_SID = _leer("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = _leer("TWILIO_AUTH_TOKEN")
+# Numero del Sandbox de Twilio, formato "whatsapp:+14155238886" (decision 29-sep-2026: Sandbox)
+TWILIO_WHATSAPP_FROM = _leer("TWILIO_WHATSAPP_FROM")
+
+# --- Numeros autorizados para el comando "ENTREGADO WA-xxx" (opcion C, 29-sep-2026) ---
+# En el .env, separados por coma:  BOT_NUMEROS_AUTORIZADOS=+506XXXXXXXX,+506YYYYYYYY
+# Van en el .env (no en el Excel) para que no aparezcan en la copia de demostracion.
+NUMEROS_AUTORIZADOS_TEXTO = _leer("BOT_NUMEROS_AUTORIZADOS")
+
+# --- Reglas propias del bot (no son datos del negocio) ---
+MINUTOS_INACTIVIDAD = int(_leer("BOT_MINUTOS_INACTIVIDAD", "30"))   # decision del usuario: 30 min
+MINUTOS_ENTREGA_ESTIMADOS = int(_leer("BOT_MINUTOS_ENTREGA", "25"))  # texto #28 aprobado
+CANTIDAD_MAXIMA_POR_LINEA = 99
+SEGUNDOS_CACHE_CATALOGO = 120        # el catalogo se relee del Excel cada 2 minutos como maximo
+
+# Revisar que cada mensaje venga de verdad de Twilio (firma X-Twilio-Signature).
+VALIDAR_FIRMA_TWILIO = _leer("BOT_VALIDAR_FIRMA", "si").lower() in ("si", "sí", "true", "1")
+
+# ---------------------------------------------------------------------------
+# OBSOLETO (29-sep-2026): el bot ya no usa plantillas de Twilio ni un catalogo
+# escrito a mano. Decision del usuario: MENUS NUMERADOS, porque el catalogo
+# cambia cada dia (combos por clima, feriados) y las plantillas son fijas.
+# Se conservan los nombres solo como historia; nada los lee.
+#   CONTENT_SID_MENU_PRINCIPAL, CONTENT_SID_LISTA_PRODUCTOS, CONTENT_SID_LISTA_COMBOS,
+#   CONTENT_SID_CONFIRMAR_PEDIDO, CONTENT_SID_AGREGAR_MAS (ver setup_content_templates.py)
+#   PRODUCTOS_PROPIOS / PRODUCTOS_TERCEROS con IDs PROD_BAGUETTE... (no coincidian con la
+#   TABLA CRUCE MAESTRA, Regla #26).
+# ---------------------------------------------------------------------------

@@ -1,106 +1,49 @@
-# Bot de WhatsApp — Panadería (Capa de conversación)
+# Bot de WhatsApp — Panadería (versión 29-sep-2026, Sesión A del bot)
 
-Este es el **primer piso** del bot: la conversación completa (saludo →
-ubicación → combos/menú → armar pedido → confirmar), probada y
-funcionando de forma aislada, **sin escribir todavía en el Excel
-maestro**. Esa segunda parte se conecta después, cuando exista la
-función Python compartida con la futura web del SaaS (ver
-`Reglas_Globales_del_Proyecto`, Regla #4).
+Bot **solo en español**, con **menús numerados**, conectado al Excel maestro a través
+de las funciones compartidas del robot (las mismas que usará el SaaS, Regla #5).
+Canal: **Sandbox de Twilio** (sin plantillas de Meta: el bot solo responde dentro de
+la ventana de 24 horas que abre el cliente).
 
-## Arquitectura de archivos
+## Archivos
 
 | Archivo | Qué hace |
 |---|---|
-| `conversation.py` | La máquina de estados de la conversación. Puro Python, sin Twilio — se puede probar sin credenciales. |
-| `app.py` | El servidor Flask que conecta Twilio con `conversation.py`. |
-| `setup_content_templates.py` | Script que se corre UNA vez para crear las plantillas de WhatsApp en Twilio (listas, botones). |
-| `config.py` | Todas las credenciales y catálogo de productos, vía variables de entorno. |
+| `conversation.py` | La conversación completa (saludo con el menú de productos → cantidades → quitar → envío o retiro → pago → resumen #28 → confirmar) y el comando `ENTREGADO WA-xxx`. No habla con Twilio ni con el Excel. |
+| `conector_excel.py` | Conector con el Excel: catálogo de hoy, cotizaciones, registro y entregas, usando `catalogo.py` y `pedidos_digitales.py`. Traduce errores a mensajes para el cliente. |
+| `fila_escrituras.py` | Las escrituras al Excel van una a la vez, en segundo plano. |
+| `nucleo.py` | Une las tres piezas anteriores; lo usan igual el servidor y el simulador. |
+| `app.py` | Servidor Flask para Twilio: revisa la firma, responde al instante y deja la escritura en la fila. |
+| `simulador.py` | Chatear con el bot en la Terminal, sin Twilio, contra la copia local. |
+| `config.py` | Configuración (lee el `.env` de la raíz). Sin claves ni teléfonos reales. |
+| `setup_content_templates.py` | OBSOLETO: plantillas de la versión anterior. Se conserva como historia. |
 
-## Por qué el cliente nunca escribe texto libre
+## Reglas que aplica (decisiones del usuario, 29-sep-2026)
 
-Confirmado en el proyecto: el cliente arma su pedido tocando botones y
-listas (no escribiendo códigos de producto). Esto se refleja en que
-`conversation.py` solo usa `texto_libre` para el saludo inicial y para
-la cantidad numérica — todo lo demás es `opcion_elegida_id` (el ID que
-Twilio manda cuando el cliente toca un botón o una fila de una lista).
+- Precios, combos, feriados/días de pago, SINPE y promoción del día se leen del Excel en el momento.
+- El cliente ve el **total completo** antes de confirmar; si cambia antes del "Sí", se vuelve a cotizar.
+- Forma de pago obligatoria (Efectivo / SINPE Móvil). Las líneas se quitan solo antes de confirmar.
+- Sin opción "Hablar con alguien": el saludo muestra directamente el menú; para consultas o errores, el
+  mensaje de pedido registrado y el recibo remiten a la panadería (atención humana = mejora para producción).
+- Pedido sin confirmar: se borra solo tras **30 minutos sin mensajes** (el reloj se reinicia con cada mensaje).
+- Se guarda el teléfono (#33 B) y el nombre de perfil; aviso en el mensaje de confirmación.
+- `ENTREGADO WA-120` solo desde números autorizados (`BOT_NUMEROS_AUTORIZADOS` en el `.env`):
+  marca la entrega (`marcar_entregado`) y envía el recibo al cliente.
 
-## Instalación
+## Probar sin Twilio (desde la carpeta ROBOT PANADERO)
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env
-# Edita .env con tus credenciales reales de Twilio
+```
+py -m whatsapp_bot.simulador
 ```
 
-## Paso 1 — Activar el Sandbox de WhatsApp de Twilio
+Escribe en la copia local `datos_prueba\maestro_prueba.xlsx` cuando confirmas o entregas:
+foto antes → simulación → restaurar la copia.
 
-1. Entra a la Twilio Console → Messaging → Try it out → Send a WhatsApp message.
-2. Sigue las instrucciones para unirte al Sandbox desde tu propio WhatsApp (escaneas un código QR o mandas un mensaje de "join ...").
-3. Copia el número de Sandbox que te asignan a `TWILIO_WHATSAPP_FROM` en tu `.env`.
+## Servidor para Twilio (fase de hosting)
 
-## Paso 2 — Crear las plantillas de contenido
-
-```bash
-python setup_content_templates.py
+```
+py -m whatsapp_bot.app
 ```
 
-Copia los 4 `ContentSid` que imprime (empiezan con `HX...`) a tu `.env`.
-
-## Paso 3 — Correr el servidor y exponerlo con ngrok
-
-```bash
-flask --app app run
-```
-
-En otra terminal:
-
-```bash
-ngrok http 5000
-```
-
-Copia la URL pública que te da ngrok (algo como `https://xxxx.ngrok-free.app`)
-y configúrala en la Twilio Console, en el campo "WHEN A MESSAGE COMES IN"
-del Sandbox, agregando `/webhook` al final (ej.
-`https://xxxx.ngrok-free.app/webhook`).
-
-## Paso 4 — Probar
-
-Escríbele por WhatsApp al número del Sandbox. Deberías recibir el menú
-principal y poder completar un pedido de prueba de principio a fin.
-
-## Probar la lógica sin WhatsApp (recomendado primero)
-
-`conversation.py` no depende de Twilio, así que se puede probar
-directo en Python:
-
-```python
-from conversation import GestorConversaciones, procesar_mensaje_entrante
-
-gestor = GestorConversaciones()
-conv = gestor.obtener_o_crear("whatsapp:+50688887777")
-
-r = procesar_mensaje_entrante(conv, texto_libre="Hola")
-print(r.tipo_mensaje)  # "menu_principal_y_pedir_ubicacion"
-```
-
-## Pendientes conocidos (documentados a propósito, no son bugs)
-
-- **`obtener_combos_activos_hoy()`** en `app.py`: hoy devuelve una lista
-  vacía (placeholder). Falta conectarla a la lectura real de
-  `'Tabla Combos Dinamicos'` vía Microsoft Graph API.
-- **`escribir_pedido_en_excel()`** en `app.py`: lanza `NotImplementedError`
-  a propósito. Debe reemplazarse por la función Python compartida con
-  la web del SaaS quest se construya, para no duplicar la lógica de
-  negocio en 2 lugares.
-- **Lista de combos activos**: hoy se envía como texto plano en vez de
-  una lista interactiva de Twilio, porque las plantillas de Twilio son
-  estáticas y los combos cambian día a día. La solución recomendada es
-  un trabajo diario (mismo patrón de "disparador por tiempo" que usa
-  NODO INTEGRAL) que actualice una plantilla de contenido fija
-  (`friendly_name="combos_del_dia"`) cada mañana — todavía no
-  construido.
-- **Persistencia de conversaciones**: `GestorConversaciones` guarda
-  todo en memoria; si el servidor se reinicia, las conversaciones en
-  curso se pierden. Aceptable para el volumen de una panadería, pero
-  documentado por si se necesita cambiar a una base de datos simple
-  más adelante.
+En Render: `gunicorn --workers 1 --threads 4 whatsapp_bot.app:app` (un solo proceso, porque
+las conversaciones viven en memoria). URL del webhook en el Sandbox: `https://<servidor>/webhook`.
