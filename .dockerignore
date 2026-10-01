@@ -1,0 +1,24 @@
+# Lo que NUNCA entra a la caja de Docker (Robot Panaderia, 1-oct-2026).
+# Proteccion extra: Render construye desde GitHub, donde estos archivos ya no estan
+# (los protege .gitignore), pero si algun dia se construye desde la PC, tampoco entran.
+
+# Claves
+.env
+**/.env
+**/.env.*
+!**/.env.example
+credenciales/
+**/robot-panaderia-canas-*.json
+
+# Copias del Excel (viven en Google Drive)
+**/*.xlsx
+**/~$*
+datos_prueba/
+
+# Python y herramientas
+**/__pycache__/
+**/*.pyc
+venv/
+.venv/
+.git/
+.vscode/

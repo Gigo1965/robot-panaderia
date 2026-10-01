@@ -10,7 +10,17 @@ WhatsApp y un microservicio): Google Drive numera cada version del archivo.
 Justo antes de subir, el robot revisa que la version siga siendo la misma que
 descargo. Si alguien subio otra version en medio, NO sobrescribe: vuelve a
 descargar y repite la edicion (hasta 3 intentos).
+
+|| V15 (1-oct-2026, Pendiente #37, opcion B1 aprobada por el usuario): Google
+Drive sube el NUMERO de version por su cuenta segundos despues de cada subida,
+aunque nadie cambie el contenido. Eso producia "conflictos" falsos (la compra
+F006 del 28-sep entro recien en el 3er intento). Ahora el choque se detecta con
+la HUELLA del contenido (md5Checksum de Drive), que solo cambia si alguien de
+verdad subio un archivo distinto. Se mantienen los 3 intentos. El numero de
+version se sigue leyendo solo como informacion (probar_conexion, registro).
+El modo local (copia de prueba) no cambia: sigue usando la hora del archivo.
 """
+import hashlib
 import json
 import logging
 import time
@@ -85,7 +95,7 @@ def obtener_metadatos():
     try:
         return _servicio_drive().files().get(
             fileId=_id_archivo(),
-            fields="id,name,mimeType,version,modifiedTime,size",
+            fields="id,name,mimeType,version,modifiedTime,size,md5Checksum",
             supportsAllDrives=True,
         ).execute()
     except ErrorConexionExcel:
@@ -139,7 +149,13 @@ def _aplicar_escudo_xlfn(contenido: bytes) -> bytes:
 
 
 def _descargar():
-    """Devuelve (contenido_en_bytes, version), ya con el escudo _xlfn aplicado."""
+    """Devuelve (contenido_en_bytes, marca), ya con el escudo _xlfn aplicado.
+
+    marca = lo que _subir usa para saber si alguien mas escribio en medio:
+      - modo local: la hora del archivo (texto), igual que siempre.
+      - Drive (|| V15, #37): {"md5": huella de los bytes DESCARGADOS (antes del
+        escudo), "version": numero de version (solo informativo)}.
+    """
     if _modo_local():
         ruta = Path(config.EXCEL_LOCAL_PATH)
         if not ruta.exists():
@@ -163,7 +179,11 @@ def _descargar():
             _, terminado = descargador.next_chunk()
     except Exception as error:
         raise ErrorConexionExcel(_explicar_error_google(error)) from error
-    return _aplicar_escudo_xlfn(memoria.getvalue()), metadatos["version"]
+    crudo = memoria.getvalue()
+    # La huella se calcula sobre lo que REALMENTE se bajo (no sobre los metadatos
+    # pedidos un instante antes): asi no hay hueco entre leer metadatos y descargar.
+    marca = {"md5": hashlib.md5(crudo).hexdigest(), "version": metadatos.get("version")}
+    return _aplicar_escudo_xlfn(crudo), marca
 
 
 def _subir(contenido: bytes, version_descargada: str):
@@ -178,10 +198,23 @@ def _subir(contenido: bytes, version_descargada: str):
 
     from googleapiclient.http import MediaIoBaseUpload
 
-    version_actual = obtener_metadatos()["version"]
-    if version_actual != version_descargada:
+    # || V15 (#37): antes se comparaba el numero de version (ver docstring); ahora la huella.
+    actuales = obtener_metadatos()
+    md5_actual = actuales.get("md5Checksum")
+    md5_descargado = version_descargada["md5"]
+    if not md5_actual:
+        raise ErrorConexionExcel(
+            "Google Drive no devolvio la huella (md5Checksum) del Excel; no se subio nada por seguridad."
+        )
+    if md5_actual != md5_descargado:
         raise ConflictoDeVersion(
-            f"El Excel cambio en Drive mientras se editaba (version {version_descargada} -> {version_actual})."
+            "El Excel cambio en Drive mientras se editaba (contenido distinto; version "
+            f"{version_descargada.get('version')} -> {actuales.get('version')})."
+        )
+    if actuales.get("version") != version_descargada.get("version"):
+        log.info(
+            "Drive cambio solo el numero de version (%s -> %s) con el mismo contenido: no es un choque.",
+            version_descargada.get("version"), actuales.get("version"),
         )
     try:
         media = MediaIoBaseUpload(BytesIO(contenido), mimetype=MIME_XLSX, resumable=True)
