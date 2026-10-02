@@ -48,13 +48,41 @@ bot = Bot(enviar=enviar_por_twilio)
 
 
 def _firma_valida(req):
+    """Revisa que el mensaje venga de verdad de Twilio (firma X-Twilio-Signature).
+
+    || V15 (1-oct-2026): en Render la firma salia "invalida" aunque el Auth Token
+    era el correcto. Twilio firma con la direccion PUBLICA exacta del webhook
+    (https://robot-panaderia.onrender.com/webhook); detras del proxy de Render el
+    bot puede ver otra (http, otro host o puerto). Ahora se prueba primero la
+    direccion publica de BOT_URL_PUBLICA (si esta en el entorno) y luego las
+    variantes que arma desde la peticion. Sigue exigiendo una firma valida: solo
+    cambia CON QUE DIRECCION se compara. Si falla, el registro muestra las
+    direcciones probadas (nunca el token).
+    """
     if not config.VALIDAR_FIRMA_TWILIO:
         return True
     from twilio.request_validator import RequestValidator
+    validador = RequestValidator(config.TWILIO_AUTH_TOKEN)
+    firma = req.headers.get("X-Twilio-Signature", "")
+
+    candidatas = []
+    if config.URL_PUBLICA_WEBHOOK:
+        candidatas.append(config.URL_PUBLICA_WEBHOOK)
     url = req.url
-    if req.headers.get("X-Forwarded-Proto") == "https" and url.startswith("http://"):
-        url = "https://" + url[len("http://"):]          # detras del proxy de Render la URL publica es https
-    return RequestValidator(config.TWILIO_AUTH_TOKEN).validate(url, req.form, req.headers.get("X-Twilio-Signature", ""))
+    if url.startswith("http://"):
+        candidatas.append("https://" + url[len("http://"):])   # detras del proxy de Render la URL publica es https
+    candidatas.append(url)
+    host = req.headers.get("X-Forwarded-Host") or req.headers.get("Host")
+    if host:
+        ruta = req.full_path[:-1] if req.full_path.endswith("?") else req.full_path
+        candidatas.append(f"https://{host.split(',')[0].strip()}{ruta}")
+
+    probadas = list(dict.fromkeys(candidatas))          # sin repetidas, en el mismo orden
+    for direccion in probadas:
+        if validador.validate(direccion, req.form, firma):
+            return True
+    log.warning("Firma de Twilio invalida. Direcciones probadas: %s", probadas)
+    return False
 
 
 def _twiml(texto):
@@ -68,7 +96,6 @@ def _twiml(texto):
 @app.route("/webhook", methods=["POST"])
 def webhook():
     if not _firma_valida(request):
-        log.warning("Firma de Twilio invalida: mensaje rechazado")
         return "Firma invalida", 403
     lat, lng = request.form.get("Latitude"), request.form.get("Longitude")
     ubicacion = (float(lat), float(lng)) if lat and lng else None

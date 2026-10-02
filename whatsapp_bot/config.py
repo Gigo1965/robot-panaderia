@@ -39,6 +39,11 @@ SEGUNDOS_CACHE_CATALOGO = 120        # el catalogo se relee del Excel cada 2 min
 
 # Revisar que cada mensaje venga de verdad de Twilio (firma X-Twilio-Signature).
 VALIDAR_FIRMA_TWILIO = _leer("BOT_VALIDAR_FIRMA", "si").lower() in ("si", "sí", "true", "1")
+# || V15 (1-oct-2026): direccion PUBLICA exacta del webhook, la misma que esta en el
+# Sandbox de Twilio (ej. https://robot-panaderia.onrender.com/webhook). Twilio firma
+# con esa direccion; detras del proxy de Render el bot puede ver otra. Opcional:
+# si no se pone, el bot arma la direccion desde la peticion (como antes).
+URL_PUBLICA_WEBHOOK = _leer("BOT_URL_PUBLICA")
 
 # ---------------------------------------------------------------------------
 # OBSOLETO (29-sep-2026): el bot ya no usa plantillas de Twilio ni un catalogo
