@@ -3,6 +3,7 @@
 # Que hace: todos los dias a las 7:00 a. m. de Costa Rica, GitHub enciende una
 # computadora temporal (Ubuntu 24.04 + LibreOffice 24.2, igual que el bot en Render),
 # baja el codigo del repositorio y corre, en este orden, los MISMOS comandos de la PC:
+#   0) Respaldo diario: copia el Excel maestro al archivo de respaldo de Drive (|| 2-oct-2026)
 #   1) NODO INTEGRAL (clima, tipo de cambio, feriados, dias de pago -> combos del dia)
 #   2) Precios de proveedores (Solera y MaxiPali)
 #   3) Competencia (Musi, con Gemini y el cache del Excel CACHE_COMPETENCIA de Drive)
@@ -13,6 +14,8 @@
 #   Settings -> Secrets and variables -> Actions
 # y aqui solo se nombran (secrets.NOMBRE). Son 4:
 #   EXCEL_MAESTRO_FILE_ID, GOOGLE_SERVICE_ACCOUNT_JSON, CACHE_COMPETENCIA_FILE_ID, GEMINI_API_KEY
+# || 2-oct-2026 (respaldo diario): y un 5o, RESPALDO_MAESTRO_FILE_ID (ID o enlace del archivo
+#   de respaldo en Drive; su nombre debe contener la palabra RESPALDO).
 #
 # Si un paso falla, los siguientes igual se intentan y la corrida queda marcada en
 # rojo (GitHub avisa por correo). Cada microservicio ya protege el Excel: si una
@@ -49,6 +52,7 @@ jobs:
       GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
       CACHE_COMPETENCIA_FILE_ID: ${{ secrets.CACHE_COMPETENCIA_FILE_ID }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      RESPALDO_MAESTRO_FILE_ID: ${{ secrets.RESPALDO_MAESTRO_FILE_ID }}
     steps:
       - name: Bajar el codigo del repositorio
         uses: actions/checkout@v6
@@ -68,7 +72,11 @@ jobs:
       - name: Instalar las librerias del robot
         run: pip install -r requirements.txt
 
+      - name: 0) Respaldo diario del Excel maestro
+        run: python -m conexion_drive.respaldo_diario
+
       - name: 1) NODO INTEGRAL
+        if: ${{ !cancelled() }}
         run: python -m microservicios.grupo3_integraciones.nodo_integral
 
       - name: 2) Precios de proveedores
