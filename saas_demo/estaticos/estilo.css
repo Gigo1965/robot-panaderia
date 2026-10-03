@@ -1,0 +1,205 @@
+/* SaaS de demostracion - Robot Panaderia (Sesion 2, 3-oct-2026).
+   Sin fuentes ni archivos externos: todo se sirve desde este servicio. */
+
+:root {
+  --papel: #f3f5f1;
+  --blanco: #ffffff;
+  --tinta: #17221d;
+  --tenue: #55625b;
+  --linea: #d3d9d1;
+  --sabana: #1d5b44;
+  --sabana-oscuro: #123d2e;
+  --sabana-claro: #dcebe3;
+  --trigo: #8a5e06;
+  --trigo-claro: #f4e7c3;
+  --vino: #8a2e3b;
+  --vino-claro: #f3dee0;
+  --titulos: "Palatino Linotype", Palatino, "Book Antiqua", "Iowan Old Style", Georgia, serif;
+  --texto: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--papel);
+  color: var(--tinta);
+  font-family: var(--texto);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+h1, h2 { font-family: var(--titulos); font-weight: 700; line-height: 1.15; margin: 0; }
+h1 { font-size: 2.1rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.3rem; }
+p { margin: 0 0 0.75rem; }
+a { color: var(--sabana); }
+code { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; }
+
+:focus-visible { outline: 3px solid var(--trigo); outline-offset: 2px; }
+
+.ancho { display: block; max-width: 72rem; margin: 0 auto; padding: 0 1.25rem; }
+.oculto { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---------- Cabecera ---------- */
+.cabecera { background: var(--sabana-oscuro); color: var(--blanco); }
+.cabecera__fila { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-top: 0.9rem; padding-bottom: 0.9rem; flex-wrap: wrap; }
+.marca { font-family: var(--titulos); font-size: 1.35rem; font-weight: 700; color: var(--blanco); text-decoration: none; }
+.marca__lugar { font-family: var(--texto); font-size: 0.85rem; font-weight: 400; color: #b9d2c6; margin-left: 0.6rem; }
+.quien { display: flex; align-items: center; gap: 0.9rem; font-size: 0.95rem; }
+.quien__rol { color: #b9d2c6; margin-left: 0.25rem; }
+
+.franja { margin: 0; background: var(--trigo-claro); color: #4d3606; border-bottom: 1px solid #e2cf9a; font-size: 0.92rem; }
+.franja__texto { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+
+.principal { padding-top: 2rem; padding-bottom: 2.5rem; }
+
+/* ---------- Botones ---------- */
+.boton {
+  display: inline-block;
+  font: inherit;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 0.55rem 0.95rem;
+  border-radius: 6px;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.boton--principal { background: var(--sabana); color: var(--blanco); }
+.boton--principal:hover { background: var(--sabana-oscuro); }
+.boton--secundario { background: var(--blanco); color: var(--sabana-oscuro); border-color: var(--linea); }
+.boton--secundario:hover { border-color: var(--sabana); }
+.boton--claro { background: transparent; color: var(--blanco); border-color: #5f8b78; padding: 0.35rem 0.8rem; }
+.boton--claro:hover { background: var(--sabana); }
+.boton--peligro { background: var(--vino); color: var(--blanco); }
+.boton--peligro:hover { background: #6f2430; }
+.boton:disabled { opacity: 0.6; cursor: progress; }
+
+/* ---------- Avisos ---------- */
+.avisos { margin-bottom: 1.5rem; }
+.aviso { padding: 0.75rem 1rem; border-left: 5px solid; background: var(--blanco); margin-bottom: 0.5rem; max-width: 60rem; }
+.aviso--ok { border-color: var(--sabana); background: var(--sabana-claro); }
+.aviso--error { border-color: var(--vino); background: var(--vino-claro); }
+.aviso--aviso { border-color: var(--trigo); background: var(--trigo-claro); }
+.guardando { padding: 0.75rem 1rem; border-left: 5px solid var(--trigo); background: var(--trigo-claro); max-width: 60rem; margin-bottom: 1.5rem; }
+
+/* ---------- Lista de pedidos ---------- */
+.encabezado { margin-bottom: 1.5rem; }
+.encabezado__resumen { color: var(--tenue); margin-top: 0.5rem; max-width: 44rem; }
+
+.pestanas { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; border-bottom: 2px solid var(--linea); margin-bottom: 0.5rem; }
+.pestana { padding: 0.5rem 0; margin-bottom: -2px; border-bottom: 2px solid transparent; color: var(--tenue); text-decoration: none; font-weight: 600; }
+.pestana:hover { color: var(--tinta); }
+.pestana--activa { color: var(--tinta); border-bottom-color: var(--sabana); }
+.pestana__n { font-weight: 400; font-variant-numeric: tabular-nums; }
+
+.vacio { padding: 2rem 0; color: var(--tenue); max-width: 40rem; }
+
+.comandas { width: 100%; border-collapse: collapse; background: var(--blanco); border: 1px solid var(--linea); }
+.comandas thead th { text-align: left; font-size: 0.85rem; font-weight: 600; color: var(--tenue); padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--linea); background: #fafbf9; }
+.comandas thead th.num { text-align: right; }
+.comandas tbody th, .comandas tbody td { padding: 0.7rem 0.75rem; border-bottom: 1px solid var(--linea); vertical-align: top; text-align: left; font-weight: 400; }
+.comandas tbody td.num { text-align: right; }
+.comandas tbody tr:last-child th, .comandas tbody tr:last-child td { border-bottom: 0; }
+.comanda--pendiente { box-shadow: inset 4px 0 0 var(--trigo); }
+.comanda--anulado td, .comanda--anulado th { color: var(--tenue); }
+.comanda__id { font-family: var(--titulos); font-size: 1.15rem; font-weight: 700; color: var(--tinta); white-space: nowrap; }
+.comandas td[data-titulo="Fecha"], .comandas td[data-titulo="Pago"] { white-space: nowrap; }
+.comanda__hora { display: block; font-size: 0.85rem; color: var(--tenue); white-space: nowrap; }
+.comandas tbody td.comanda__acciones { text-align: right; white-space: nowrap; }
+.comanda__acciones form { display: inline; }
+.comanda__acciones .boton { margin-left: 0.35rem; }
+
+/* ---------- Sello de estado ---------- */
+.sello {
+  display: inline-block;
+  font-family: var(--titulos);
+  font-weight: 700;
+  font-size: 0.92rem;
+  line-height: 1;
+  padding: 0.3rem 0.5rem;
+  border: 1.5px solid var(--tenue);
+  border-radius: 3px;
+  color: var(--tenue);
+  white-space: nowrap;
+}
+.sello--entregado { color: var(--sabana); border-color: var(--sabana); }
+.sello--pendiente { color: var(--trigo); border-color: var(--trigo); background: var(--trigo-claro); }
+.sello--anulado { color: var(--vino); border-color: var(--vino); }
+.sello--grande { font-size: 1.25rem; padding: 0.5rem 0.8rem; border-width: 3px; border-style: double; transform: rotate(-4deg); }
+
+/* ---------- Detalle del pedido ---------- */
+.volver { margin-bottom: 1rem; }
+.detalle { display: grid; grid-template-columns: minmax(0, 26rem) minmax(0, 1fr); gap: 2.5rem; align-items: start; }
+
+.tiquete { background: var(--blanco); border: 1px solid var(--linea); padding: 1.5rem 1.5rem 1.25rem; box-shadow: 0 2px 0 var(--linea); }
+.tiquete__cabeza { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; padding-bottom: 1rem; border-bottom: 2px dashed var(--linea); }
+.tiquete__tipo { margin: 0; color: var(--tenue); font-size: 0.9rem; }
+.tiquete__id { font-size: 2.4rem; }
+.tiquete__datos, .tiquete__totales { margin: 0; padding: 0.9rem 0; }
+.tiquete__datos div, .tiquete__totales div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.15rem 0; }
+.tiquete dt { color: var(--tenue); }
+.tiquete dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.tiquete__lineas { width: 100%; border-collapse: collapse; border-top: 2px dashed var(--linea); border-bottom: 2px dashed var(--linea); }
+.tiquete__lineas th { font-size: 0.85rem; font-weight: 600; color: var(--tenue); text-align: left; padding: 0.7rem 0 0.3rem; }
+.tiquete__lineas th.num { text-align: right; }
+.tiquete__lineas td { padding: 0.3rem 0; }
+.tiquete__lineas td.num:first-child, .tiquete__lineas th.num:first-child { text-align: left; width: 3.5rem; }
+.tiquete__lineas tbody tr:last-child td { padding-bottom: 0.8rem; }
+.tiquete__totales div.tiquete__total { font-family: var(--titulos); font-size: 1.35rem; font-weight: 700; border-top: 1px solid var(--linea); margin-top: 0.4rem; padding-top: 0.5rem; }
+.tiquete__total dt { color: var(--tinta); }
+.tiquete__nota { margin: 0.5rem 0 0; padding-top: 0.9rem; border-top: 2px dashed var(--linea); color: var(--tenue); font-size: 0.92rem; }
+
+.acciones { max-width: 34rem; }
+.accion { padding-bottom: 1.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--linea); }
+.accion h2 { margin-bottom: 0.5rem; }
+.accion p { color: var(--tenue); }
+
+.formulario label { display: block; font-weight: 600; margin: 0.75rem 0 0.3rem; }
+.formulario input[type=text], .formulario input[type=password], .formulario textarea {
+  display: block; width: 100%; font: inherit; color: var(--tinta); background: var(--blanco);
+  padding: 0.55rem 0.7rem; border: 1.5px solid #aab4ac; border-radius: 6px;
+}
+.formulario textarea { resize: vertical; }
+.formulario .boton { margin-top: 1rem; }
+
+.como { color: var(--tenue); font-size: 0.95rem; }
+.como summary { cursor: pointer; font-weight: 600; color: var(--tinta); }
+.como p { margin-top: 0.6rem; }
+
+/* ---------- Ingreso y problemas ---------- */
+.ingreso, .problema { max-width: 26rem; margin: 2rem auto 0; }
+.ingreso__texto { color: var(--tenue); margin-top: 0.5rem; }
+.ingreso .formulario { background: var(--blanco); border: 1px solid var(--linea); padding: 0.75rem 1.5rem 1.5rem; margin-top: 1.25rem; }
+.ensayo { margin-top: 1.25rem; font-size: 0.92rem; color: var(--tenue); }
+.ensayo ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }
+.problema { max-width: 40rem; margin-left: 0; }
+.problema h1 { margin-bottom: 0.75rem; }
+
+.pie { color: var(--tenue); font-size: 0.88rem; padding-bottom: 2rem; }
+.pie p { border-top: 1px solid var(--linea); padding-top: 1rem; }
+.pie__enlace { margin-left: 0.75rem; }
+
+/* ---------- Pantallas angostas: cada pedido es un bloque ---------- */
+@media (max-width: 56rem) {
+  .detalle { grid-template-columns: 1fr; gap: 2rem; }
+  .comandas, .comandas tbody, .comandas tr, .comandas th, .comandas td { display: block; }
+  .comandas { border: 0; background: transparent; }
+  .comandas thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .comandas tbody tr { background: var(--blanco); border: 1px solid var(--linea); margin-bottom: 0.9rem; padding: 0.6rem 0.9rem 0.9rem; }
+  .comandas tbody th, .comandas tbody td, .comandas tbody td.num { border: 0; padding: 0.2rem 0; text-align: left; }
+  .comandas tbody td[data-titulo]::before { content: attr(data-titulo) ": "; color: var(--tenue); }
+  .comanda__hora { display: inline; margin-left: 0.4rem; }
+  .comandas tbody td.comanda__acciones { text-align: left; padding-top: 0.6rem; white-space: normal; }
+  .comanda__acciones .boton { margin: 0 0.35rem 0 0; }
+  h1 { font-size: 1.7rem; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .boton { transition: background-color 0.12s ease, border-color 0.12s ease; }
+}

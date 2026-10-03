@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block titulo %}Pedidos digitales{% endblock %} | Robot Panadería</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='estilo.css') }}">
+</head>
+<body>
+  <header class="cabecera">
+    <div class="ancho cabecera__fila">
+      <a class="marca" href="{{ url_for('pedidos') }}">Robot Panadería <span class="marca__lugar">Cañas, Guanacaste</span></a>
+      {% if rol %}
+      <div class="quien">
+        <span class="quien__nombre">{{ nombre_rol }}{% if usuario|lower != rol %} <span class="quien__rol">{{ usuario }}</span>{% endif %}</span>
+        <form method="post" action="{{ url_for('salir') }}">
+          <input type="hidden" name="ficha" value="{{ ficha }}">
+          <button class="boton boton--claro" type="submit">Salir</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </header>
+
+  <p class="franja">
+    <span class="ancho franja__texto">
+      {% if ensayo %}
+      Ensayo en esta computadora: se trabaja sobre una copia temporal. No se toca Drive ni la copia local.
+      {% else %}
+      Copia de demostración: lo que hagas aquí se escribe en una copia del Excel. El Excel maestro de la panadería no se toca.
+      {% endif %}
+    </span>
+  </p>
+
+  <main class="ancho principal">
+    {% with avisos = get_flashed_messages(with_categories=true) %}
+    {% if avisos %}
+    <div class="avisos" role="status">
+      {% for clase, texto in avisos %}<p class="aviso aviso--{{ clase }}">{{ texto }}</p>{% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <p class="guardando" id="guardando" hidden>
+      Guardando en el Excel. Tarda unos 15 segundos: el robot descarga el archivo, escribe,
+      recalcula las fórmulas y lo vuelve a subir. No cierres esta página.
+    </p>
+
+    {% block contenido %}{% endblock %}
+  </main>
+
+  {% if libro %}
+  <footer class="ancho pie">
+    <p>
+      Excel leído a las {{ libro.leido|hora }}: <strong>{{ libro.archivo }}</strong>{% if libro.version %} (versión {{ libro.version }} de Drive){% endif %}
+      <a class="pie__enlace" href="{{ url_for('pedidos', ver=filtro or 'por-entregar', actualizar=1) }}">Leer de nuevo</a>
+    </p>
+  </footer>
+  {% endif %}
+  <script src="{{ url_for('static', filename='pantalla.js') }}"></script>
+</body>
+</html>

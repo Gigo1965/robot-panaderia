@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block titulo %}No se pudo completar{% endblock %}
+{% block contenido %}
+<section class="problema">
+  <h1>No se pudo completar</h1>
+  <p>{{ problema }}</p>
+  <p><a class="boton boton--secundario" href="{{ url_for('pedidos') }}">Volver a los pedidos</a></p>
+</section>
+{% endblock %}

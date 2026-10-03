@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block titulo %}Pedido {{ p.id }}{% endblock %}
+{% block contenido %}
+<p class="volver"><a href="{{ url_for('pedidos') }}">Todos los pedidos</a></p>
+
+<div class="detalle">
+  <article class="tiquete" aria-label="Comanda {{ p.id }}">
+    <header class="tiquete__cabeza">
+      <div>
+        <p class="tiquete__tipo">{% if p.situacion == 'entregado' %}Recibo{% else %}Comanda{% endif %}</p>
+        <h1 class="tiquete__id">{{ p.id }}</h1>
+      </div>
+      {% if p.situacion == 'entregado' %}<span class="sello sello--grande sello--entregado">Entregado</span>
+      {% elif p.situacion == 'anulado' %}<span class="sello sello--grande sello--anulado">Anulado</span>
+      {% elif p.situacion == 'pendiente' %}<span class="sello sello--grande sello--pendiente">Por entregar</span>
+      {% else %}<span class="sello sello--grande">{{ p.estado_excel or 'Sin estado' }}</span>{% endif %}
+    </header>
+
+    <dl class="tiquete__datos">
+      <div><dt>Cliente</dt><dd>{{ p.cliente or 'Sin nombre' }}</dd></div>
+      <div><dt>Pedido el</dt><dd>{{ p.fecha|fecha }}, {{ p.hora|hora }}</dd></div>
+      <div><dt>Llegó por</dt><dd>{{ p.fuente or 'Sin dato' }}</dd></div>
+      {% if p.telefono %}<div><dt>Teléfono</dt><dd>{{ p.telefono }}</dd></div>{% endif %}
+    </dl>
+
+    <table class="tiquete__lineas">
+      <thead><tr><th scope="col" class="num">Cant.</th><th scope="col">Producto</th><th scope="col" class="num">Subtotal</th></tr></thead>
+      <tbody>
+        {% for l in p.lineas %}
+        <tr><td class="num">{{ l.cantidad }}</td><td>{{ l.producto }}</td><td class="num">{{ l.subtotal|colones }}</td></tr>
+        {% else %}
+        <tr><td colspan="3">{{ p.comanda }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <dl class="tiquete__totales">
+      <div><dt>Subtotal</dt><dd>{{ p.subtotal|colones }}</dd></div>
+      {% if p.descuento %}<div><dt>Descuento</dt><dd>-{{ p.descuento|colones }}</dd></div>{% endif %}
+      <div><dt>Envío</dt><dd>{% if p.envio %}{{ p.envio|colones }}{% else %}Retiro en la panadería{% endif %}</dd></div>
+      <div class="tiquete__total"><dt>Total</dt><dd>{{ p.total|colones }}</dd></div>
+      <div><dt>Forma de pago</dt><dd>{{ p.pago or 'Sin dato' }}</dd></div>
+    </dl>
+
+    {% if p.situacion == 'entregado' %}
+    <p class="tiquete__nota">Se entregó el {{ p.entregado_en|fecha_hora }}
+      En la panadería este recibo le llega al cliente por WhatsApp; en la demostración se muestra aquí.</p>
+    {% elif p.situacion == 'anulado' %}
+    <p class="tiquete__nota">Motivo de la anulación{% if p.anulado_a_las %} ({{ p.anulado_a_las|hora }}){% endif %}:
+      {{ p.motivo_anulacion or 'sin motivo anotado' }}.
+      El pedido original queda en el Excel y la anulación es una fila aparte en negativo ({{ p.id }}-A).</p>
+    {% endif %}
+  </article>
+
+  <aside class="acciones">
+    <section class="accion">
+      <h2>Entrega</h2>
+      {% if p.puede_entregar %}
+      <p>Anota la fecha y la hora de entrega en el Excel. El estado del pedido no cambia.</p>
+      <form method="post" action="{{ url_for('entregar', id_pedido=p.id) }}" data-escribe
+            data-confirmar="¿Marcar {{ p.id }} como entregado? Un pedido entregado ya no se puede anular.">
+        <input type="hidden" name="ficha" value="{{ ficha }}">
+        <button class="boton boton--principal" type="submit">Marcar entregado</button>
+      </form>
+      {% elif p.situacion == 'entregado' %}
+      <p>Hora de entrega: {{ p.entregado_en|fecha_hora }}</p>
+      {% elif p.situacion == 'anulado' %}
+      <p>Un pedido anulado no se entrega.</p>
+      {% else %}
+      <p>Este pedido no está confirmado.</p>
+      {% endif %}
+    </section>
+
+    <section class="accion">
+      <h2>Anulación</h2>
+      {% if not es_admin %}
+      <p>Solo administración puede anular un pedido. Ingresaste como {{ nombre_rol|lower }}.</p>
+      {% elif p.puede_anular %}
+      <p>Se anula la comanda completa. El pedido original no se borra: se agrega una fila en negativo con el motivo.</p>
+      <form method="post" action="{{ url_for('anular', id_pedido=p.id) }}" data-escribe class="formulario"
+            data-confirmar="¿Anular {{ p.id }} completo? Esta acción no se puede deshacer.">
+        <input type="hidden" name="ficha" value="{{ ficha }}">
+        <label for="motivo">Motivo de la anulación</label>
+        <textarea id="motivo" name="motivo" rows="3" maxlength="{{ largo_motivo }}" required
+                  placeholder="Por ejemplo: el cliente no estaba en la dirección"></textarea>
+        <button class="boton boton--peligro" type="submit">Anular pedido</button>
+      </form>
+      {% else %}
+      <p>Este pedido no se puede anular. {{ p.por_que_no_anula }}</p>
+      {% endif %}
+    </section>
+
+    <details class="como">
+      <summary>Cómo funciona esta pantalla</summary>
+      <p>Cada botón llama a la misma función de Python que usa el bot de WhatsApp
+        (<code>marcar_entregado</code> y <code>anular_pedido_digital</code>). Las reglas las aplica
+        esa función, no esta página: si algo no se permite, el robot lo rechaza y no escribe nada.</p>
+      <p>Cada cambio queda anotado en la hoja RegistroEventos del Excel, con el origen
+        «SaaS ({{ rol }})».</p>
+    </details>
+  </aside>
+</div>
+{% endblock %}

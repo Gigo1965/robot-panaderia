@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Pedidos digitales</h1>
+  <p class="encabezado__resumen">
+    {% if libro.cuentas.pendiente == 1 %}Hay 1 pedido por entregar.{% else %}Hay {{ libro.cuentas.pendiente }} pedidos por entregar.{% endif %}
+    Llegan por el bot de WhatsApp y quedan registrados en el Excel.
+  </p>
+</div>
+
+<nav class="pestanas" aria-label="Filtrar pedidos">
+  {% for clave, titulo, cuantos in pestanas %}
+  <a class="pestana{% if clave == filtro %} pestana--activa{% endif %}" href="{{ url_for('pedidos', ver=clave) }}"
+     {% if clave == filtro %}aria-current="page"{% endif %}>{{ titulo }} <span class="pestana__n">{{ cuantos }}</span></a>
+  {% endfor %}
+</nav>
+
+{% if not lista %}
+<p class="vacio">
+  {% if filtro == 'por-entregar' %}No hay pedidos por entregar. Cuando un cliente confirme uno por WhatsApp, aparece aquí.
+  {% elif filtro == 'anulados' %}No hay pedidos anulados.
+  {% elif filtro == 'entregados' %}Todavía no se ha entregado ningún pedido.
+  {% else %}El Excel no tiene pedidos digitales.{% endif %}
+</p>
+{% else %}
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Pedido</th>
+      <th scope="col">Fecha</th>
+      <th scope="col">Cliente</th>
+      <th scope="col">Comanda</th>
+      <th scope="col" class="num">Total</th>
+      <th scope="col">Pago</th>
+      <th scope="col">Estado</th>
+      <th scope="col"><span class="oculto">Acciones</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in lista %}
+    <tr class="comanda comanda--{{ p.situacion }}">
+      <th scope="row" data-titulo="Pedido"><a class="comanda__id" href="{{ url_for('pedido', id_pedido=p.id) }}">{{ p.id }}</a></th>
+      <td data-titulo="Fecha">{{ p.fecha|fecha }}<span class="comanda__hora">{{ p.hora|hora }}</span></td>
+      <td data-titulo="Cliente">{{ p.cliente or 'Sin nombre' }}</td>
+      <td data-titulo="Comanda">{{ p.comanda }}</td>
+      <td data-titulo="Total" class="num">{{ p.total|colones }}</td>
+      <td data-titulo="Pago">{{ p.pago or 'Sin dato' }}</td>
+      <td data-titulo="Estado">
+        {% if p.situacion == 'entregado' %}<span class="sello sello--entregado">Entregado</span><span class="comanda__hora">{{ p.entregado_en|fecha_hora }}</span>
+        {% elif p.situacion == 'anulado' %}<span class="sello sello--anulado">Anulado</span>
+        {% elif p.situacion == 'pendiente' %}<span class="sello sello--pendiente">Por entregar</span>
+        {% else %}<span class="sello">{{ p.estado_excel or 'Sin estado' }}</span>{% endif %}
+      </td>
+      <td class="comanda__acciones">
+        {% if p.puede_entregar %}
+        <form method="post" action="{{ url_for('entregar', id_pedido=p.id) }}" data-escribe
+              data-confirmar="¿Marcar {{ p.id }} como entregado? Un pedido entregado ya no se puede anular.">
+          <input type="hidden" name="ficha" value="{{ ficha }}">
+          <button class="boton boton--principal" type="submit">Marcar entregado</button>
+        </form>
+        {% endif %}
+        <a class="boton boton--secundario" href="{{ url_for('pedido', id_pedido=p.id) }}">Ver</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

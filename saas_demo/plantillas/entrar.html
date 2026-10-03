@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block titulo %}Ingresar{% endblock %}
+{% block contenido %}
+<section class="ingreso">
+  <h1>Pedidos de la panadería</h1>
+  <p class="ingreso__texto">Ingresa con el usuario de despacho o el de administración.</p>
+  <form method="post" action="{{ url_for('entrar') }}" class="formulario" autocomplete="off">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <label for="usuario">Usuario</label>
+    <input id="usuario" name="usuario" type="text" required autofocus autocapitalize="none" spellcheck="false">
+    <label for="clave">Contraseña</label>
+    <input id="clave" name="clave" type="password" required>
+    <button class="boton boton--principal" type="submit">Ingresar</button>
+  </form>
+  {% if cuentas_ensayo %}
+  <div class="ensayo">
+    <p>Usuarios del ensayo (solo existen en esta computadora):</p>
+    <ul>
+      {% for c in cuentas_ensayo %}<li><code>{{ c.usuario }}</code> con la contraseña <code>{{ c.clave }}</code></li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
