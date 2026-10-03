@@ -1,0 +1,80 @@
+# Tarea diaria del Robot Panaderia (Decisiones Pendientes #14 y #20) - 2-oct-2026
+#
+# Que hace: todos los dias a las 7:00 a. m. de Costa Rica, GitHub enciende una
+# computadora temporal (Ubuntu 24.04 + LibreOffice 24.2, igual que el bot en Render),
+# baja el codigo del repositorio y corre, en este orden, los MISMOS comandos de la PC:
+#   1) NODO INTEGRAL (clima, tipo de cambio, feriados, dias de pago -> combos del dia)
+#   2) Precios de proveedores (Solera y MaxiPali)
+#   3) Competencia (Musi, con Gemini y el cache del Excel CACHE_COMPETENCIA de Drive)
+# Cada comando escribe en el Excel maestro de Google Drive con la misma funcion de
+# siempre (descargar -> editar -> recalcular -> subir).
+#
+# Las claves NUNCA van en este archivo: GitHub las guarda cifradas en
+#   Settings -> Secrets and variables -> Actions
+# y aqui solo se nombran (secrets.NOMBRE). Son 4:
+#   EXCEL_MAESTRO_FILE_ID, GOOGLE_SERVICE_ACCOUNT_JSON, CACHE_COMPETENCIA_FILE_ID, GEMINI_API_KEY
+#
+# Si un paso falla, los siguientes igual se intentan y la corrida queda marcada en
+# rojo (GitHub avisa por correo). Cada microservicio ya protege el Excel: si una
+# fuente falla, la celda conserva su ultimo valor (Regla #19).
+
+name: Tarea diaria 7:00 CR
+
+on:
+  schedule:
+    # 13:00 UTC = 7:00 a. m. en Costa Rica (UTC-6 todo el ano, sin horario de verano).
+    # GitHub puede empezar unos minutos tarde cuando tiene mucha carga.
+    - cron: "0 13 * * *"
+  workflow_dispatch:      # boton "Run workflow": correrla a mano cuando se quiera
+
+concurrency:
+  group: tarea-diaria     # nunca dos corridas al mismo tiempo
+  cancel-in-progress: false
+
+permissions:
+  contents: read          # la tarea solo LEE el repositorio
+
+jobs:
+  tarea:
+    name: NODO + precios + competencia
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ORIGEN_EXCEL: drive
+      RECALCULAR: "si"
+      ZONA_HORARIA: America/Costa_Rica
+      LIMITE_CAMBIO_PRECIO: "0.5"
+      PYTHONUNBUFFERED: "1"
+      EXCEL_MAESTRO_FILE_ID: ${{ secrets.EXCEL_MAESTRO_FILE_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      CACHE_COMPETENCIA_FILE_ID: ${{ secrets.CACHE_COMPETENCIA_FILE_ID }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Bajar el codigo del repositorio
+        uses: actions/checkout@v6
+
+      - name: Preparar Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar LibreOffice (recalcula las formulas del Excel)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-calc libreoffice-core fonts-dejavu-core
+          soffice --version
+
+      - name: Instalar las librerias del robot
+        run: pip install -r requirements.txt
+
+      - name: 1) NODO INTEGRAL
+        run: python -m microservicios.grupo3_integraciones.nodo_integral
+
+      - name: 2) Precios de proveedores
+        if: ${{ !cancelled() }}
+        run: python -m microservicios.grupo3_integraciones.precios_proveedores
+
+      - name: 3) Competencia (Musi)
+        if: ${{ !cancelled() }}
+        run: python -m microservicios.grupo3_integraciones.competencia

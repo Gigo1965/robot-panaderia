@@ -18,6 +18,11 @@ Que hace (Reglas #18 y NODO INTEGRAL del libro de mapas):
     El precio y la vigencia vienen DENTRO de las imagenes. Gemini devuelve un
     JSON (producto, precio, vigencia). Cada imagen se lee UNA sola vez: el
     resultado se guarda en datos_prueba/cache_competencia.json.
+    || V16 (2-oct-2026, Decisiones Pendientes #20): el cache ahora vive en el Excel
+    CACHE_COMPETENCIA.xlsx (tabla TablaCache, una fila por lectura = historial
+    acumulado): en Google Drive (CACHE_COMPETENCIA_FILE_ID) o, con --local, en la copia
+    datos_prueba/CACHE_COMPETENCIA_prueba.xlsx. Lo maneja cache_competencia.py. Si no
+    hay ni ID ni copia local, se sigue usando el archivo JSON de antes.
   Capa 3 - decision y escritura:
     VIGENTE     -> hay al menos una promo con fecha vigente.
     SIN_PROMO   -> la consulta funciono, pero no hay promo vigente:
@@ -69,6 +74,8 @@ if "--local" in sys.argv:
     os.environ.setdefault("EXCEL_LOCAL_PATH", "datos_prueba/maestro_prueba.xlsx")
 
 from conexion_drive import config  # noqa: E402  (carga el .env: GEMINI_API_KEY)
+
+from . import cache_competencia  # noqa: E402  (|| V16, #20: cache en el Excel CACHE_COMPETENCIA)
 
 # ---------------------------------------------------------------- Parametros
 TIMEOUT_S = 30
@@ -486,14 +493,40 @@ def evaluar(leido, fecha_subida_img, hoy):
     return f"VENCIDA (sin fecha impresa, {antiguedad})", precio
 
 
+_cache_excel = None             # || V16 (#20): el Excel CACHE_COMPETENCIA abierto en esta corrida
+
+
 def _cargar_cache():
+    """|| V16 (#20): si hay Excel de cache (Drive o copia local) se lee de ahi; si no, del
+    archivo JSON de antes. Devuelve siempre {url: {"leido": {...}, "fecha_lectura": ...}}."""
+    global _cache_excel
+    if cache_competencia.modo():
+        _cache_excel = cache_competencia.CacheExcel()
+        cache = _cache_excel.como_dict()
+        print(f"    Cache: {_cache_excel.destino} -> {len(cache)} imagen(es) ya leida(s)")
+        return cache
     try:
         return json.loads(CACHE.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def _guardar_cache(cache):
+def _guardar_cache(cache, nueva=None):
+    """nueva = (competidor, url, fecha_subida, leido, hoy) cuando Gemini acaba de leer una
+    imagen. Con Excel de cache: se agrega UNA fila y se guarda en seguida; si guardar falla
+    (Drive, LibreOffice) solo se avisa y se reintenta al final: la lectura sigue en memoria."""
+    if _cache_excel is not None:
+        if nueva:
+            competidor, url, fecha_img, leido, hoy = nueva
+            estado, _ = evaluar(leido, fecha_img, hoy)
+            _cache_excel.agregar(competidor, url, fecha_img, leido, estado,
+                                 _modelo_elegido or "desconocido")
+        try:
+            _cache_excel.guardar()
+        except Exception as error:      # noqa: BLE001  (no detener la corrida por el cache)
+            print(f"    AVISO: no se pudo guardar el cache ahora ({error}); "
+                  "se reintenta al final de la corrida.")
+        return
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -530,7 +563,8 @@ def consultar_competidor(nombre, datos, con_vision, cache, hoy):
                     print(f"    Gemini FALLO en {img['url']}: {e}")
                     continue
                 cache[clave] = {"leido": leido, "fecha_lectura": hoy.isoformat()}
-                _guardar_cache(cache)      # se guarda en seguida: si se corta, no se pierde
+                # se guarda en seguida: si se corta, no se pierde
+                _guardar_cache(cache, nueva=(nombre, clave, img["fecha"], leido, hoy))
                 origen = "Gemini"
             estado, precio = evaluar(leido, img["fecha"], hoy)
             precio_txt = f"₡{precio:,}" if precio else "sin precio"
@@ -647,7 +681,9 @@ def main():
             resumen, detalle, valor = textos_para_excel(r, hoy)
             print(f"  {r['competidor']:<9} {r['estado']}: {detalle} | valor {valor}")
     if solo_consultar:
-        print("Modo solo consulta: no se toco ningun Excel.")
+        print("Modo solo consulta: no se toco ningun Excel."
+              + (" (El Excel MAESTRO; las lecturas nuevas de Gemini si quedan en el cache.)"
+                 if _cache_excel is not None else ""))
         return
 
     from conexion_drive.drive_excel import editar_excel
