@@ -29,6 +29,16 @@ Uso (desde la carpeta ROBOT PANADERO):
 Limite de cambio de precio (se activa DESPUES de la primera corrida real):
     en el .env agregar  LIMITE_CAMBIO_PRECIO=0.5   (= 50 %). Si un precio nuevo
     difiere mas que eso del anterior, no se escribe y queda marcado en el evento.
+
+|| V17 (3-oct-2026, Decisiones Pendientes #56) - RESPALDO MANUAL DE SOLERA:
+    Desde la nube (GitHub Actions, Render) el sitio de Solera responde con una verificacion
+    contra robots ("sgcaptcha") en vez del catalogo. Cuando Solera no responde, el robot
+    toma los precios del RESPALDO: el mismo catalogo, guardado con Ctrl + S desde un
+    navegador por la administracion y subido a la carpeta de Drive RESPALDO_FUENTES_FOLDER_ID
+    (ver respaldo_fuentes.py). Se busca por SKU; siguen activos el limite de cambio y
+    "lectura fallida = la celda no se toca". En el evento queda de que archivo y de que
+    fecha vino el dato; si el respaldo tiene mas de 10 dias el evento queda PARCIAL.
+    Sin carpeta de respaldos el comportamiento es el de antes.
 """
 import json
 import os
@@ -85,6 +95,11 @@ class ConsultaFallida(Exception):
     """La API del proveedor no devolvio un precio valido para ese producto."""
 
 
+class FuenteNoResponde(ConsultaFallida):
+    """|| V17: el sitio del proveedor no respondio (sin conexion, error del servidor o
+    verificacion contra robots). Es el unico caso en que se usa el respaldo manual."""
+
+
 # ---------------------------------------------------------------- Red
 _primera_llamada = True
 
@@ -107,16 +122,22 @@ def _get_json(url):
             pedido = urllib.request.Request(url, headers={"User-Agent": USER_AGENT,
                                                           "Accept": "application/json"})
             with urllib.request.urlopen(pedido, timeout=TIMEOUT_S) as respuesta:
-                return json.loads(respuesta.read().decode("utf-8"))
+                cuerpo = respuesta.read()
+            if b"sgcaptcha" in cuerpo[:2000]:
+                # || V17: el sitio pide una verificacion contra robots. Reintentar no la
+                # quita y seria insistirle a un sitio que ya dijo que no: se sale de una vez.
+                ultimo_error = "el sitio pide verificacion contra robots (sgcaptcha)"
+                break
+            return json.loads(cuerpo.decode("utf-8"))
         except urllib.error.HTTPError as e:
             ultimo_error = f"HTTP {e.code}"
             if e.code in (400, 401, 403, 404):
                 break          # reintentar no lo va a arreglar
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             ultimo_error = f"sin conexion ({e})"
-        except json.JSONDecodeError:
+        except (UnicodeDecodeError, json.JSONDecodeError):
             ultimo_error = "la respuesta no es JSON"
-    raise ConsultaFallida(ultimo_error or "error desconocido")
+    raise FuenteNoResponde(ultimo_error or "error desconocido")
 
 
 def _validar(precio):
@@ -133,7 +154,49 @@ def _precio_woo(producto):
     return int(precios["price"]) / (10 ** decimales)
 
 
+_solera_no_responde = None      # || V17: motivo, si Solera ya fallo en esta corrida
+respaldo_usado = None           # || V17: el respaldo de Solera que se uso (None = ninguno)
+
+
 def consultar_solera(codigo):
+    """|| V17: primero la lectura directa; si Solera no responde, el respaldo manual.
+    Tras el primer fallo de conexion ya no se le insiste al sitio en esta corrida."""
+    global _solera_no_responde
+    if _solera_no_responde is None:
+        try:
+            return _consultar_solera_directo(codigo)
+        except FuenteNoResponde as e:
+            _solera_no_responde = str(e)
+            print(f"  Solera no responde ({e}): se busca el RESPALDO manual de sus productos")
+    return _consultar_solera_respaldo(codigo, _solera_no_responde)
+
+
+def _consultar_solera_respaldo(codigo, motivo):
+    """Precio del producto segun el archivo de respaldo mas nuevo (se busca por SKU)."""
+    global respaldo_usado
+    from . import respaldo_fuentes        # import tardio: respeta --local y carga el .env
+    try:
+        respaldo = respaldo_fuentes.leer("solera")
+    except respaldo_fuentes.RespaldoNoDisponible as e:
+        raise ConsultaFallida(f"{motivo}; sin respaldo: {e}")
+    slug, sku = SOLERA[codigo]
+    producto = next((p for p in respaldo["datos"]
+                     if isinstance(p, dict) and str(p.get("sku")) == sku), None)
+    if producto is None:
+        raise ConsultaFallida(f"{motivo}; el respaldo {respaldo['nombre']} no trae el SKU {sku}")
+    try:
+        precio = _validar(_precio_woo(producto))
+    except (KeyError, ValueError, TypeError):
+        raise ConsultaFallida(f"{motivo}; el respaldo {respaldo['nombre']} no trae prices.price "
+                              f"del SKU {sku}")
+    respaldo_usado = respaldo
+    nota = f"RESPALDO {respaldo['nombre']} del {respaldo['fecha'].strftime('%d-%m-%Y')}"
+    if producto.get("is_in_stock") is False:
+        nota += ", SIN STOCK segun el proveedor"
+    return precio, nota
+
+
+def _consultar_solera_directo(codigo):
     slug, sku = SOLERA[codigo]
     datos = _get_json(f"{SOLERA_API}?slug={urllib.parse.quote(slug)}")
     via = "slug"
@@ -241,6 +304,14 @@ def main():
     resultados = consultar_todo()
     validos = sum(1 for r in resultados if r["precio"] is not None)
     print(f"\nPrecios obtenidos: {validos} de {len(resultados)} productos")
+    desde_respaldo = sum(1 for r in resultados
+                         if r["precio"] is not None and r["nota"].startswith("RESPALDO"))
+    texto_respaldo = ""
+    if respaldo_usado:                     # || V17
+        from . import respaldo_fuentes
+        texto_respaldo = respaldo_fuentes.texto(respaldo_usado)
+        print(f"  De ellos, {desde_respaldo} desde el RESPALDO manual: {texto_respaldo} "
+              f"[{respaldo_usado['origen']}]")
     if solo_consultar:
         print("Modo --solo-consultar: no se toco ningun Excel.")
         return
@@ -261,11 +332,15 @@ def main():
                    + f" | Fallidos (celda NO tocada) {len(resumen['fallos'])}: "
                    + ("; ".join(resumen["fallos"]) or "-")
                    + (f" | Frenados por limite {limite:.0%}: " + "; ".join(resumen["frenados"])
-                      if resumen["frenados"] else ""))
+                      if resumen["frenados"] else "")
+                   + (f" | Desde RESPALDO manual {desde_respaldo}: {texto_respaldo}"
+                      if respaldo_usado else ""))
+        respaldo_viejo = bool(respaldo_usado and respaldo_usado["viejo"])   # || V17
         registrar_evento(
             wb, modulo="Integraciones", tipo_evento="PRECIOS_PROVEEDORES", entidad="Tablas maestras",
             id_entidad="precios_proveedores", accion="Actualizar precios (API catalogo)",
-            estado="OK" if not resumen["fallos"] and not resumen["frenados"] else "PARCIAL",
+            estado="OK" if not resumen["fallos"] and not resumen["frenados"]
+            and not respaldo_viejo else "PARCIAL",
             detalle=detalle, origen="Robot Python",
         )
         resumen["hubo_cambios"] = True     # siempre se guarda el evento (auditoria diaria)

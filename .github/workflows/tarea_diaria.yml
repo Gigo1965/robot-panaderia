@@ -20,6 +20,16 @@
 # Si un paso falla, los siguientes igual se intentan y la corrida queda marcada en
 # rojo (GitHub avisa por correo). Cada microservicio ya protege el Excel: si una
 # fuente falla, la celda conserva su ultimo valor (Regla #19).
+#
+# || 3-oct-2026 (Decisiones Pendientes #56):
+#   a) RESPALDO MANUAL: los sitios de Solera y Musi le piden una verificacion contra robots
+#      a los servidores de nube. Cuando no responden, los pasos 2 y 3 usan el archivo mas
+#      nuevo de la carpeta de respaldos de Drive (6o Secret: RESPALDO_FUENTES_FOLDER_ID),
+#      que la administracion actualiza con Ctrl + S desde un navegador cada 10 dias.
+#   b) HORARIO: la corrida automatica de las 7:00 del 3-oct no salio (GitHub puede atrasar o
+#      descartar las tareas programadas a la hora en punto). Se mueve a las 6:17 a. m. CR
+#      (12:17 UTC): fuera de la hora en punto y con margen para estar lista antes de las 7:00.
+#      El nombre de la tarea no cambia, para no partir el historial de corridas.
 
 name: Tarea diaria 7:00 CR
 
@@ -27,7 +37,8 @@ on:
   schedule:
     # 13:00 UTC = 7:00 a. m. en Costa Rica (UTC-6 todo el ano, sin horario de verano).
     # GitHub puede empezar unos minutos tarde cuando tiene mucha carga.
-    - cron: "0 13 * * *"
+    # || 3-oct-2026: antes "0 13 * * *" (7:00 CR en punto). Ahora 12:17 UTC = 6:17 a. m. CR.
+    - cron: "17 12 * * *"
   workflow_dispatch:      # boton "Run workflow": correrla a mano cuando se quiera
 
 concurrency:
@@ -53,6 +64,7 @@ jobs:
       CACHE_COMPETENCIA_FILE_ID: ${{ secrets.CACHE_COMPETENCIA_FILE_ID }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       RESPALDO_MAESTRO_FILE_ID: ${{ secrets.RESPALDO_MAESTRO_FILE_ID }}
+      RESPALDO_FUENTES_FOLDER_ID: ${{ secrets.RESPALDO_FUENTES_FOLDER_ID }}
     steps:
       - name: Bajar el codigo del repositorio
         uses: actions/checkout@v6

@@ -54,6 +54,20 @@ La clave de Gemini se lee SIEMPRE del .env (GEMINI_API_KEY); nunca va en el codi
 Modelo: opcional GEMINI_MODELO en el .env; si no esta, se elige el "flash" mas nuevo.
 Cupo gratuito: si Google avisa que se agoto el cupo DIARIO de un modelo, se pasa a otro
 "flash"; si se agota en todos, el robot deja de llamar a Gemini en esa corrida.
+
+|| V17 (3-oct-2026, Decisiones Pendientes #56) - RESPALDO MANUAL Y LECTURA POR GOOGLE:
+  Desde la nube (GitHub Actions, Render) el sitio de Musi responde con una verificacion
+  contra robots ("sgcaptcha") en vez de la pagina. Dos cambios:
+  a) Capa 1: si la pagina no responde, se usa el RESPALDO manual: la misma pagina guardada
+     con Ctrl + S desde un navegador y subida a la carpeta de Drive
+     RESPALDO_FUENTES_FOLDER_ID (ver respaldo_fuentes.py). El texto que se escribe en el
+     Excel lleva la FECHA DEL RESPALDO (es la fecha del dato), y el evento dice de que
+     archivo vino; con mas de 10 dias el evento queda PARCIAL.
+  b) Capa 2: si el robot no puede descargar una imagen NUEVA (no esta en el cache), le pide
+     a Gemini que la abra el mismo desde Google (herramienta "URL context"). Si Google
+     tampoco puede, la lectura queda incompleta y no se toca nada (Regla #19).
+    py -m microservicios.grupo3_integraciones.competencia --probar-vision-url <URL de imagen>
+        (igual que --probar-vision, pero la imagen la abre Gemini por Google)
 """
 import base64
 import json
@@ -76,6 +90,7 @@ if "--local" in sys.argv:
 from conexion_drive import config  # noqa: E402  (carga el .env: GEMINI_API_KEY)
 
 from . import cache_competencia  # noqa: E402  (|| V16, #20: cache en el Excel CACHE_COMPETENCIA)
+from . import respaldo_fuentes  # noqa: E402  (|| V17, #56: respaldo manual en la carpeta de Drive)
 
 # ---------------------------------------------------------------- Parametros
 TIMEOUT_S = 30
@@ -113,8 +128,17 @@ COMPETIDORES = {
         "celda_nodo": "C21", "celda_detalle": "D11", "celda_valor": "E11",
         "rotulo_requerido": ("B21", "DATA OFERTA MUSI"),   # lo crea la migracion m004
         "activo": True,
+        "respaldo": "musi",     # || V17: archivo respaldo_musi... de la carpeta de respaldos
     },
 }
+
+# || V17: texto que se agrega al PROMPT cuando la imagen la abre Gemini por Google
+PROMPT_URL = """
+La imagen NO va adjunta: esta en la direccion de abajo. Abrela con la herramienta de URL y
+responde con el mismo objeto JSON, sin texto adicional. Si no puedes abrir la imagen,
+responde exactamente {{"error": "NO_PUDE_ABRIR"}} y no inventes nada.
+Direccion: {url}"""
+TIMEOUT_URL_S = 120               # Gemini tarda mas cuando el mismo va a buscar la imagen
 
 PROMPT = """Eres analista de precios de la competencia de una panaderia en Costa Rica.
 La imagen fue publicada en el sitio web de {competidor} y subida en {fecha_subida}.
@@ -144,14 +168,15 @@ def hoy_cr():
 
 
 # ---------------------------------------------------------------- Red
-def _pedir(url, datos=None, encabezados=None):
-    """GET (o POST si hay datos) con timeout y reintentos. Devuelve (bytes, tipo_mime)."""
+def _pedir(url, datos=None, encabezados=None, espera=None):
+    """GET (o POST si hay datos) con timeout y reintentos. Devuelve (bytes, tipo_mime).
+    || V17: 'espera' = segundos de timeout para esta llamada (por defecto TIMEOUT_S)."""
     ultimo_error = None
     for intento in range(1, REINTENTOS + 1):
         try:
             cabeceras = {"User-Agent": USER_AGENT, **(encabezados or {})}
             pedido = urllib.request.Request(url, data=datos, headers=cabeceras)
-            with urllib.request.urlopen(pedido, timeout=TIMEOUT_S) as respuesta:
+            with urllib.request.urlopen(pedido, timeout=espera or TIMEOUT_S) as respuesta:
                 tipo = (respuesta.headers.get("Content-Type") or "").split(";")[0].strip()
                 return respuesta.read(), tipo
         except urllib.error.HTTPError as e:
@@ -184,6 +209,8 @@ def _pedir(url, datos=None, encabezados=None):
 def _get_json(url):
     time.sleep(PAUSA_WEB_S)
     contenido, _ = _pedir(url, encabezados={"Accept": "application/json"})
+    if b"sgcaptcha" in contenido[:2000]:      # || V17
+        raise ConsultaFallida("el sitio pide verificacion contra robots (sgcaptcha)")
     try:
         return json.loads(contenido.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -276,6 +303,31 @@ def imagenes_del_html(html):
     return list(resultado.values())
 
 
+respaldos_usados = {}           # || V17: {competidor: respaldo manual usado en esta corrida}
+
+
+def _paginas_del_respaldo(nombre, datos, slug, error, notas):
+    """|| V17: la pagina 'slug' segun el respaldo manual mas nuevo, o None si no hay."""
+    fuente = datos.get("respaldo")
+    if not fuente:
+        return None
+    try:
+        respaldo = respaldo_fuentes.leer(fuente)
+    except respaldo_fuentes.RespaldoNoDisponible as e:
+        notas.append(f"{slug}: sin respaldo manual ({e})")
+        return None
+    paginas = [p for p in respaldo["datos"]
+               if isinstance(p, dict) and f"/{slug}" in str(p.get("link") or "")
+               and isinstance((p.get("content") or {}).get("rendered"), str)]
+    if not paginas:
+        notas.append(f"{slug}: el respaldo {respaldo['nombre']} no trae esa pagina")
+        return None
+    respaldos_usados[nombre] = respaldo
+    notas.append(f"{slug}: el sitio no respondio ({error}); se uso el RESPALDO manual "
+                 f"{respaldo_fuentes.texto(respaldo)}")
+    return paginas
+
+
 def consultar_paginas(nombre, datos):
     """Capa 1 de un competidor. Devuelve (imagenes, notas). Lanza ConsultaFallida si TODO fallo."""
     imagenes, notas, respondio = [], [], False
@@ -286,8 +338,11 @@ def consultar_paginas(nombre, datos):
             paginas = _get_json(url_api)
             respondio = True
         except ConsultaFallida as e:
-            notas.append(f"{slug}: FALLO ({e})")
-            continue
+            paginas = _paginas_del_respaldo(nombre, datos, slug, e, notas)   # || V17
+            if paginas is None:
+                notas.append(f"{slug}: FALLO ({e})")
+                continue
+            respondio = True
         if not paginas:
             notas.append(f"{slug}: la pagina ya no existe")
             continue
@@ -313,7 +368,9 @@ def consultar_paginas(nombre, datos):
         respondio = _consultar_tipo_promos(datos, imagenes, notas) or respondio
 
     if not respondio:
-        raise ConsultaFallida("ninguna consulta respondio")
+        # || V17: el motivo de cada pagina va en el mensaje (antes se perdia)
+        raise ConsultaFallida("ninguna consulta respondio"
+                              + (" [" + " / ".join(notas) + "]" if notas else ""))
     return imagenes, notas
 
 
@@ -404,8 +461,47 @@ def _cambiar_a_modelo_alterno(motivo="sigue saturado"):
     return True
 
 
-def leer_imagen_con_gemini(url, competidor, fecha):
-    """Descarga la imagen y le pide a Gemini el JSON de la promocion."""
+_FIRMAS_IMAGEN = (b"\xff\xd8", b"\x89PNG", b"GIF8", b"BM")
+
+
+def _es_imagen(contenido, tipo):
+    """|| V17: True si lo descargado es de verdad una imagen (y no una pagina de verificacion)."""
+    inicio = contenido[:16]
+    if inicio.startswith(_FIRMAS_IMAGEN) or (inicio[:4] == b"RIFF" and inicio[8:12] == b"WEBP") \
+            or b"ftyp" in inicio:
+        return True
+    return tipo.startswith("image/") and not contenido.lstrip()[:1] == b"<"
+
+
+def _json_de_texto(texto):
+    """|| V17: el objeto JSON que viene dentro de un texto (a veces envuelto en ```json)."""
+    inicio, fin = texto.find("{"), texto.rfind("}")
+    if inicio < 0 or fin <= inicio:
+        raise json.JSONDecodeError("sin objeto JSON", texto, 0)
+    return json.loads(texto[inicio:fin + 1])
+
+
+def _lectura_por_url(respuesta):
+    """|| V17: interpreta la respuesta de Gemini cuando EL abrio la imagen (URL context)."""
+    candidato = json.loads(respuesta)["candidates"][0]
+    meta = candidato.get("urlContextMetadata") or candidato.get("url_context_metadata") or {}
+    lista = meta.get("urlMetadata") or meta.get("url_metadata") or []
+    estados = [str(u.get("urlRetrievalStatus") or u.get("url_retrieval_status") or "?")
+               for u in lista]
+    if not any("SUCCESS" in e for e in estados):
+        raise ConsultaFallida("Google no pudo abrir la imagen ("
+                              + (", ".join(estados) or "sin dato de lectura") + ")")
+    texto = " ".join(p.get("text", "") for p in candidato["content"]["parts"])
+    leido = _json_de_texto(texto)
+    if not isinstance(leido, dict) or leido.get("error") or "es_promocion" not in leido:
+        raise ConsultaFallida("Gemini no pudo leer la imagen por su direccion")
+    return leido
+
+
+def leer_imagen_con_gemini(url, competidor, fecha, por_url=False):
+    """Descarga la imagen y le pide a Gemini el JSON de la promocion.
+    || V17: si el robot no puede descargarla (verificacion contra robots del sitio) o si
+    por_url=True, la imagen la abre Gemini desde Google (herramienta URL context)."""
     global _ultima_llamada_gemini, _cupo_agotado
     clave = os.getenv("GEMINI_API_KEY")
     if not clave:
@@ -413,21 +509,38 @@ def leer_imagen_con_gemini(url, competidor, fecha):
     if _cupo_agotado:
         raise CupoDiarioAgotado("cupo diario de Gemini agotado en esta corrida (no se llamo)")
 
-    imagen, tipo = _pedir(url)
-    if not tipo.startswith("image/"):
+    imagen, tipo = b"", ""
+    if not por_url:                       # || V17
+        try:
+            imagen, tipo = _pedir(url)
+            if not _es_imagen(imagen, tipo):
+                raise ConsultaFallida("el sitio no entrego la imagen (verificacion contra robots)")
+        except ConsultaFallida as e:
+            print(f"      No se pudo descargar la imagen ({e}): la abre Gemini por Google")
+            por_url = True
+    if not por_url and not tipo.startswith("image/"):
         tipo = "image/png" if url.lower().endswith(".png") else "image/jpeg"
 
     espera = PAUSA_GEMINI_S - (time.time() - _ultima_llamada_gemini)
     if espera > 0:
         time.sleep(espera)
-    cuerpo = {
-        "contents": [{"parts": [
-            {"inline_data": {"mime_type": tipo, "data": base64.b64encode(imagen).decode("ascii")}},
-            {"text": PROMPT.format(competidor=competidor,
-                                   fecha_subida=fecha.isoformat() if fecha else "fecha desconocida")},
-        ]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 0},
-    }
+    texto_prompt = PROMPT.format(competidor=competidor,
+                                 fecha_subida=fecha.isoformat() if fecha else "fecha desconocida")
+    if por_url:                           # || V17: Gemini abre la imagen desde Google
+        cuerpo = {
+            "contents": [{"parts": [{"text": texto_prompt + PROMPT_URL.format(url=url)}]}],
+            "tools": [{"url_context": {}}],
+            "generationConfig": {"temperature": 0},
+        }
+    else:
+        cuerpo = {
+            "contents": [{"parts": [
+                {"inline_data": {"mime_type": tipo,
+                                 "data": base64.b64encode(imagen).decode("ascii")}},
+                {"text": texto_prompt},
+            ]}],
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0},
+        }
     datos_json = json.dumps(cuerpo).encode("utf-8")
     modelo_gemini(clave)
     intentos_modelo = 1 + len(_modelos_alternos)   # cada modelo se prueba una vez por imagen
@@ -436,7 +549,8 @@ def leer_imagen_con_gemini(url, competidor, fecha):
         try:
             respuesta, _ = _pedir(url_modelo, datos=datos_json,
                                   encabezados={"Content-Type": "application/json",
-                                               "x-goog-api-key": clave})
+                                               "x-goog-api-key": clave},
+                                  espera=TIMEOUT_URL_S if por_url else None)
             break
         except CupoDiarioAgotado:
             _modelos_agotados.add(_modelo_elegido)
@@ -455,6 +569,8 @@ def leer_imagen_con_gemini(url, competidor, fecha):
     else:
         raise ConsultaFallida("todos los modelos 'flash' siguen saturados para esta imagen")
     try:
+        if por_url:                       # || V17
+            return _lectura_por_url(respuesta)
         texto = json.loads(respuesta)["candidates"][0]["content"]["parts"][0]["text"]
         leido = json.loads(texto)
     except (KeyError, IndexError, json.JSONDecodeError):
@@ -582,17 +698,21 @@ def consultar_competidor(nombre, datos, con_vision, cache, hoy):
               f"-> sus celdas NO se tocan en esta corrida")
         return {"competidor": nombre, "estado": "FALLO", "vigentes": [],
                 "notas": notas + [f"lectura incompleta: {leidas} de {len(visibles)}"]
-                + [f"vision: {e}" for e in errores_vision]}
+                + [f"vision: {e}" for e in errores_vision],
+                "respaldo": respaldos_usados.get(nombre)}
     estado = "VIGENTE" if vigentes else "SIN_PROMO"
     return {"competidor": nombre, "estado": estado, "vigentes": vigentes,
             "notas": notas + [f"vision FALLO: {e}" for e in errores_vision],
-            "visibles": len(visibles), "total": len(imagenes)}
+            "visibles": len(visibles), "total": len(imagenes),
+            "respaldo": respaldos_usados.get(nombre)}      # || V17
 
 
 # ---------------------------------------------------------------- Paso 3: escribir
 def textos_para_excel(resultado, hoy):
     """(resumen NODO, detalle Tabla Combos, valor) de un competidor con estado != FALLO."""
-    fecha_txt = hoy.strftime("%d-%m-%Y")
+    # || V17: si la pagina vino del respaldo manual, la fecha es la del respaldo (la del dato)
+    fecha_dato = (resultado.get("respaldo") or {}).get("fecha") or hoy
+    fecha_txt = fecha_dato.strftime("%d-%m-%Y")
     if resultado["estado"] == "SIN_PROMO":
         texto = f"Sin promocion vigente ({fecha_txt})"
         return texto, texto, 0
@@ -637,20 +757,24 @@ def main():
     args = sys.argv[1:]
     hoy = hoy_cr()
 
-    if "--probar-vision" in args:
-        i = args.index("--probar-vision")
+    modo_prueba = next((m for m in ("--probar-vision-url", "--probar-vision") if m in args), None)
+    if modo_prueba:                       # || V17: --probar-vision-url = la abre Gemini por Google
+        i = args.index(modo_prueba)
         if i + 1 >= len(args):
             print("Falta la URL de la imagen. Ejemplo:\n  py -m microservicios.grupo3_integraciones."
                   "competencia --probar-vision https://sitio.com/wp-content/uploads/2025/06/x.jpg")
             return
         url = args[i + 1]
         print(f"=== Prueba de vision con Gemini ===\nImagen: {url}")
-        leido = leer_imagen_con_gemini(url, "competidor", fecha_subida(url))
+        if modo_prueba == "--probar-vision-url":
+            print("Modo --probar-vision-url: la imagen la abre Gemini desde Google (URL context).")
+        leido = leer_imagen_con_gemini(url, "competidor", fecha_subida(url),
+                                       por_url=(modo_prueba == "--probar-vision-url"))
         print("Respuesta de Gemini:\n" + json.dumps(leido, ensure_ascii=False, indent=2))
         estado, precio = evaluar(leido, fecha_subida(url), hoy)
         print(f"Decision del robot para hoy {hoy.isoformat()}: {estado}"
               + (f" | precio ₡{precio:,}" if precio else ""))
-        print("Modo --probar-vision: no se toco ningun Excel ni el cache.")
+        print(f"Modo {modo_prueba}: no se toco ningun Excel ni el cache.")
         return
 
     con_vision = "--sin-vision" not in args
@@ -701,7 +825,9 @@ def main():
         registrar_evento(
             wb, modulo="Integraciones", tipo_evento="COMPETENCIA", entidad="Competencia",
             id_entidad="competencia", accion="Revisar promociones de competidores",
-            estado="OK" if all(r["estado"] != "FALLO" for r in resultados) else "PARCIAL",
+            estado="OK" if all(r["estado"] != "FALLO" for r in resultados)
+            and not any((r.get("respaldo") or {}).get("viejo") for r in resultados)
+            else "PARCIAL",                # || V17: respaldo de mas de 10 dias = PARCIAL
             detalle=detalle[:2000], origen="Robot Python",
         )
         return {"cambios": cambios, "hubo_cambios": True}   # siempre se guarda el evento
