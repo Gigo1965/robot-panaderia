@@ -30,6 +30,17 @@
 #      descartar las tareas programadas a la hora en punto). Se mueve a las 6:17 a. m. CR
 #      (12:17 UTC): fuera de la hora en punto y con margen para estar lista antes de las 7:00.
 #      El nombre de la tarea no cambia, para no partir el historial de corridas.
+#
+# || 4-oct-2026 (Decisiones Pendientes #57, decision del usuario, opcion B): DOS HORARIOS.
+#   La corrida programada volvio a salir a las 12:18 p. m. CR: el 3-oct (pedida a las 7:00)
+#   con 5 h 18 min de atraso y el 4-oct (pedida a las 6:17) con 6 h 01 min. Cambiar el minuto
+#   no quito el atraso. PRUEBA: pedir la tarea a las 12:17 a. m. y a las 6:17 a. m. CR.
+#     - Si GitHub atrasa unas 6 horas: sale cerca de las 6:17 a. m. y de las 12:18 p. m.
+#     - Si GitHub es puntual: sale a las 12:17 a. m. y a las 6:17 a. m. (la segunda deja el
+#       clima de la manana, porque NODO INTEGRAL usa la temperatura del momento).
+#     - Si las dos salen al mediodia: mover la hora no sirve (queda el disparador externo).
+#   Correr dos veces NO duplica datos: cada corrida escribe en las mismas celdas; solo quedan
+#   mas renglones en 'RegistroEventos' (evidencia de la hora real) y el respaldo se repite.
 
 name: Tarea diaria 7:00 CR
 
@@ -38,7 +49,9 @@ on:
     # 13:00 UTC = 7:00 a. m. en Costa Rica (UTC-6 todo el ano, sin horario de verano).
     # GitHub puede empezar unos minutos tarde cuando tiene mucha carga.
     # || 3-oct-2026: antes "0 13 * * *" (7:00 CR en punto). Ahora 12:17 UTC = 6:17 a. m. CR.
-    - cron: "17 12 * * *"
+    # || 4-oct-2026 (#57): dos horarios (ver el encabezado). Las horas de GitHub son UTC.
+    - cron: "17 6 * * *"     # 06:17 UTC = 12:17 a. m. CR (nuevo)
+    - cron: "17 12 * * *"    # 12:17 UTC = 6:17 a. m. CR (el de antes, se conserva)
   workflow_dispatch:      # boton "Run workflow": correrla a mano cuando se quiera
 
 concurrency:
