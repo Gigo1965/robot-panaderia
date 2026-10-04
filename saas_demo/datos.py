@@ -186,21 +186,32 @@ def _construir(wb):
     return pedidos
 
 
-def leer_pedidos(forzar=False):
-    """{'pedidos': [...], 'archivo': nombre, 'version': n, 'leido': datetime, 'cuentas': {...}}"""
+def leer_libro(forzar=False):
+    """El Excel de demostracion ya leido, para TODOS los modulos del SaaS.
+
+    Devuelve {'wb': libro de VALORES (solo lectura), 'archivo', 'version', 'leido'}.
+    Se guarda unos segundos en memoria (SAAS_SEGUNDOS_CACHE) y se olvida despues de cada escritura.
+    """
     with _candado_cache:
         vigente = _cache["datos"] is not None and time.monotonic() - _cache["momento"] < config.SEGUNDOS_CACHE
         if vigente and not forzar:
             return _cache["datos"]
         archivo = verificar_copia()
         version = None if config.ENSAYO else obtener_metadatos().get("version")
-        pedidos = _construir(leer_excel())
-        cuentas = {s: sum(1 for p in pedidos if p["situacion"] == s) for s in (PENDIENTE, ENTREGADO, ANULADO)}
-        cuentas["todos"] = len(pedidos)
-        datos = {"pedidos": pedidos, "archivo": archivo, "version": version,
-                 "leido": ahora_local(), "cuentas": cuentas}
+        datos = {"wb": leer_excel(), "archivo": archivo, "version": version, "leido": ahora_local()}
         _cache.update(momento=time.monotonic(), datos=datos)
         return datos
+
+
+def leer_pedidos(forzar=False):
+    """{'pedidos': [...], 'archivo': nombre, 'version': n, 'leido': datetime, 'cuentas': {...}}"""
+    libro = leer_libro(forzar)
+    if "pedidos" not in libro:
+        pedidos = _construir(libro["wb"])
+        cuentas = {s: sum(1 for p in pedidos if p["situacion"] == s) for s in (PENDIENTE, ENTREGADO, ANULADO)}
+        cuentas["todos"] = len(pedidos)
+        libro.update(pedidos=pedidos, cuentas=cuentas)
+    return libro
 
 
 def buscar_pedido(id_pedido, forzar=False):
@@ -216,7 +227,8 @@ def olvidar_cache():
 # ----------------------------------------------------------------------------
 # Escritura: las DOS funciones compartidas, una a la vez y con tiempo medido
 # ----------------------------------------------------------------------------
-def _escribir(descripcion, funcion):
+def escribir(descripcion, funcion):
+    """Ejecuta UNA escritura: revisa la copia, una a la vez, mide el tiempo. Devuelve (resultado, segundos)."""
     if not _candado_escritura.acquire(timeout=SEGUNDOS_ESPERA_CANDADO):
         raise Ocupado("Hay otra escritura en curso en el Excel. Espera un momento y vuelve a intentarlo.")
     inicio = time.monotonic()
@@ -233,11 +245,11 @@ def _escribir(descripcion, funcion):
 
 def entregar(id_pedido, rol):
     """Boton 'Marcar entregado' -> marcar_entregado (la misma funcion del bot)."""
-    return _escribir(f"SaaS entregar {id_pedido} ({rol})",
+    return escribir(f"SaaS entregar {id_pedido} ({rol})",
                      lambda: pd.marcar_entregado(id_pedido, origen=f"SaaS ({rol})"))
 
 
 def anular(id_pedido, motivo, rol):
     """Boton 'Anular pedido' -> anular_pedido_digital (solo administracion; lo exige app.py)."""
-    return _escribir(f"SaaS anular {id_pedido} ({rol})",
+    return escribir(f"SaaS anular {id_pedido} ({rol})",
                      lambda: pd.anular_pedido_digital(id_pedido, motivo, origen=f"SaaS ({rol})"))

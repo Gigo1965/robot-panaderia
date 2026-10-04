@@ -9,15 +9,23 @@ Que revisa:
   E) "Anular pedido" (administracion): fila -A en negativo, evento ANULACION_PEDIDO,
      'Flujo caja diario' baja en el monto del pedido; se rechazan: motivo vacio,
      pedido pagado por SINPE Movil, pedido ya entregado y pedido ya anulado.
+  G) Ventas despacho: comanda de varios productos con TOTAL A COBRAR antes de confirmar (#70),
+     una fila por producto en Tabla6, un evento, el Excel rebaja el inventario, envio repetido,
+     total que cambio, rechazos del robot y anulacion por el despachador.
+  H) Descuento de dia de pago y feriado (#62, 'Interface digital' B5): solo administracion,
+     de 0 % a 10 %, evento con valor anterior y nuevo.
+  I) Ingreso de Inventario: solo administracion, costo congelado de la TCM, sugerencias de
+     nombres, cafe Ca01 y produccion propia rechazados.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
-Escribe 2 veces en la copia temporal (unos 10 s cada una en la PC).
+Escribe 9 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca de 2 minutos.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
 """
 import hashlib
+import re
 import sys
 
 from .ensayo import COPIA_LOCAL, preparar_copia_temporal
@@ -36,7 +44,9 @@ from conexion_drive import config as config_robot                # noqa: E402
 from conexion_drive import leer_excel                            # noqa: E402
 from conexion_drive.recalculo import buscar_errores             # noqa: E402
 from conexion_drive.tablas import leer_tabla, obtener_tabla      # noqa: E402
+from microservicios.grupo1_captura_operativa import descuento_general as dg   # noqa: E402
 from microservicios.grupo1_captura_operativa import pedidos_digitales as pd   # noqa: E402
+from microservicios.grupo1_captura_operativa.catalogo import Catalogo          # noqa: E402
 
 errores = []
 
@@ -74,6 +84,25 @@ def suma_flujo(columna):
     ws = leer_excel()["Flujo caja diario"]
     return round(sum(ws.cell(f, columna).value or 0 for f in range(5, ws.max_row + 1)
                      if isinstance(ws.cell(f, columna).value, (int, float))), 2)
+
+
+def unico_de(pagina):
+    """El numero de envio unico que la pantalla trae escondido en el formulario."""
+    return re.search(r'name="unico" value="([^"]+)"', pagina.get_data(as_text=True)).group(1)
+
+
+def inventario(producto, columna):
+    """Un valor de 'Control de Inventario' (lo calcula el Excel con sus formulas)."""
+    wb = leer_excel()
+    ws, tabla = obtener_tabla(wb, "Control de Inventario", "TablaControlInventario")
+    fila = next(f for f in leer_tabla(ws, tabla) if str(f.get("Producto Maestro")).strip() == producto)
+    return round(float(fila.get(columna) or 0), 2)
+
+
+def ultima_fila(hoja, nombre_tabla, columna_clave):
+    wb = leer_excel()
+    ws, tabla = obtener_tabla(wb, hoja, nombre_tabla)
+    return [f for f in leer_tabla(ws, tabla) if f.get(columna_clave) not in (None, "")][-1]
 
 
 def configuracion_rechazada(entorno, fragmento):
@@ -244,6 +273,147 @@ def main():
     revisar(para_anular.encode() in pagina.data, "el pedido aparece en la lista de Anulados")
     respuesta = admin.post("/salir", data={"ficha": ficha_admin})
     revisar(admin.get("/").status_code == 302, "despues de Salir ya no se ve la lista")
+
+    # ------------------------------------------------------------------ G
+    paso("G) Ventas despacho: comanda con total a cobrar (#70), despacho registra y anula")
+    pagina = despacho.get("/ventas-despacho")
+    revisar(pagina.status_code == 200 and "La comanda está vacía".encode() in pagina.data, "la pantalla abre con la comanda vacia")
+    catalogo = Catalogo(leer_excel())
+    precios = {c: round(float(p), 2) for c, n, p in catalogo.lista_para_mostrar()}
+    leche = next(n for c, n, p in catalogo.lista_para_mostrar() if c == "L01")
+    existencia_antes, leche_antes = inventario("Baguette", "Existencia Actual"), inventario(leche, "Existencia Actual")
+    huella_antes = huella(COPIA_TEMPORAL)
+
+    def agregar(producto, cantidad):
+        return despacho.post("/ventas-despacho/agregar", data={"producto": producto, "cantidad": cantidad, "ficha": ficha_despacho})
+
+    inactivo = next((c["codigo"] for c in catalogo.combos if c["codigo"].startswith("co") and not c["activo"]), None)
+    for producto, cantidad in (("P01", "0"), ("XX99", "1"), (inactivo, "1")):
+        if producto:
+            agregar(producto, cantidad)
+    pagina = despacho.get("/ventas-despacho")
+    revisar("La comanda está vacía".encode() in pagina.data,
+            f"cantidad 0, producto inexistente y combo {inactivo} inactivo: el robot no los deja entrar a la comanda")
+    agregar("P01", "2"), agregar("L01", "1"), agregar("P01", "1")
+    esperado = round(3 * precios["P01"] + precios["L01"], 2)
+    pagina = despacho.get("/ventas-despacho")
+    revisar(f"₡{esperado:,.2f}".encode() in pagina.data and b"Total a cobrar" in pagina.data,
+            f"3 Baguette + 1 leche: la pantalla muestra el total a cobrar {esperado:,.2f} antes de confirmar")
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "armar la comanda no escribe nada en el Excel")
+    despacho.post("/ventas-despacho/registrar", data={"unico": unico_de(pagina), "total": str(esperado + 100), "ficha": ficha_despacho})
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "si el total ya no es el que se mostro: rechazado, no se escribe nada")
+    pagina = despacho.get("/ventas-despacho")
+    unico = unico_de(pagina)
+    despacho.post("/ventas-despacho/registrar", data={"unico": unico, "total": str(esperado), "ficha": ficha_despacho})
+    ws_v, tabla_v = obtener_tabla(leer_excel(), "Ventas despacho", "Tabla6")
+    filas_v = [f for f in leer_tabla(ws_v, tabla_v) if f.get("Producto") not in (None, "")][-2:]
+    revisar([(f.get("Producto"), f.get("Cantidad")) for f in filas_v] == [("Baguette", 3), (leche, 1)]
+            and filas_v[0].get("Hora") == filas_v[1].get("Hora") and all(f.get("Estado de orden") == "ORDEN CORRECTA" for f in filas_v),
+            f"filas {filas_v[0]['_fila']} y {filas_v[1]['_fila']} de Tabla6: una por producto, misma fecha y hora")
+    revisar(filas_v[0].get("Precio") == precios["P01"] and round(sum(f.get("Total") for f in filas_v), 2) == esperado,
+            f"precios de la tabla cruce maestra; los totales por formula suman {esperado:,.2f}")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == "VENTA_DESPACHO" and evento.get("ORIGEN") == "SaaS (despacho)"
+            and evento.get("VALOR_REFERENCIA") == esperado, f"un evento VENTA_DESPACHO por la comanda, con el total {esperado:,.2f}")
+    # round(): 8.55 - 1 da 7.550000000000001 en la computadora; se compara a 2 decimales.
+    revisar(inventario("Baguette", "Existencia Actual") == round(existencia_antes - 3, 2)
+            and inventario(leche, "Existencia Actual") == round(leche_antes - 1, 2),
+            f"el Excel rebajo el inventario: Baguette {existencia_antes:g} -> {existencia_antes - 3:g}, leche {leche_antes:g} -> {leche_antes - 1:g}")
+    revisar("La comanda está vacía".encode() in despacho.get("/ventas-despacho").data, "despues de registrar, la comanda queda vacia")
+    huella_antes = huella(COPIA_TEMPORAL)
+    agregar("P01", "3"), agregar("L01", "1")
+    despacho.post("/ventas-despacho/registrar", data={"unico": unico, "total": str(esperado), "ficha": ficha_despacho})
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "el mismo formulario enviado dos veces no registra dos ventas")
+    despacho.post("/ventas-despacho/quitar", data={"producto": "L01", "ficha": ficha_despacho})
+    revisar(f"₡{3 * precios['P01']:,.2f}".encode() in despacho.get("/ventas-despacho").data, "quitar una linea: el total a cobrar se recalcula")
+    despacho.post("/ventas-despacho/quitar", data={"producto": "*", "ficha": ficha_despacho})
+    despacho.post("/ventas-despacho/registrar", data={"unico": "prueba-comanda-vacia", "total": "0", "ficha": ficha_despacho})
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "comanda vacia: no se registra nada")
+    for fila in filas_v:
+        despacho.post("/ventas-despacho/anular", data={"fila": str(fila["_fila"]), "ficha": ficha_despacho})
+    ws_v, tabla_v = obtener_tabla(leer_excel(), "Ventas despacho", "Tabla6")
+    anuladas = [f for f in leer_tabla(ws_v, tabla_v) if f["_fila"] in (filas_v[0]["_fila"], filas_v[1]["_fila"])]
+    revisar(all(f.get("Estado de orden") == "ORDEN ANULADA" for f in anuladas),
+            "anular: solo cambia el estado a ORDEN ANULADA, producto por producto (las ventas no se borran)")
+    revisar(inventario("Baguette", "Existencia Actual") == existencia_antes and inventario(leche, "Existencia Actual") == leche_antes,
+            "el inventario volvio a su valor")
+    huella_antes = huella(COPIA_TEMPORAL)
+    despacho.post("/ventas-despacho/anular", data={"fila": str(filas_v[0]["_fila"]), "ficha": ficha_despacho})
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "anular dos veces: no se escribe nada")
+
+    # ------------------------------------------------------------------ H
+    paso("H) Descuento de dia de pago y feriado (#62, 'Interface digital' B5)")
+    revisar(despacho.get("/descuento-general").status_code == 403, "despacho no puede entrar (403)")
+    admin = app.test_client()
+    respuesta, ficha_admin = ingresar(admin, config.ROL_ADMIN)
+    pagina = admin.get("/descuento-general")
+    inicial = dg.leer_descuento_general()
+    revisar(pagina.status_code == 200 and f"Hoy está en {inicial:g} %".encode() in pagina.data,
+            f"administracion ve el valor actual ({inicial:g} %)")
+    huella_antes = huella(COPIA_TEMPORAL)
+    for valor in ("11", "-1", "abc"):
+        admin.post("/descuento-general", data={"porcentaje": valor, "ficha": ficha_admin})
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "11, -1 y 'abc': rechazados, no se escribe nada (maximo 10 %)")
+    nuevo = 10 if inicial != 10 else 5
+    admin.post("/descuento-general", data={"porcentaje": str(nuevo), "ficha": ficha_admin})
+    revisar(leer_excel()["Interface digital"]["B5"].value == nuevo / 100, f"B5 quedo en {nuevo / 100} ({nuevo} %)")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == dg.TIPO_EVENTO and evento.get("ORIGEN") == "SaaS (administracion)"
+            and "->" in str(evento.get("DETALLE")), f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    revisar(Catalogo(leer_excel()).reglas["pct_general"] == nuevo / 100, "el robot (catalogo.py) ya lee el descuento nuevo")
+    huella_antes = huella(COPIA_TEMPORAL)
+    admin.post("/descuento-general", data={"porcentaje": str(nuevo), "ficha": ficha_admin})
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "el mismo valor otra vez: SIN_CAMBIO, no se escribe nada")
+    revisar(dg.normalizar_porcentaje("7,5 %") == 7.5, "la funcion acepta '7,5 %' como 7.5 %")
+    admin.post("/descuento-general", data={"porcentaje": f"{inicial:g}", "ficha": ficha_admin})
+    revisar(dg.leer_descuento_general() == inicial, f"el descuento volvio a {inicial:g} %")
+
+    # ------------------------------------------------------------------ I
+    paso("I) Ingreso de Inventario (administracion)")
+    revisar(despacho.get("/ingreso-inventario").status_code == 403, "despacho no puede entrar (403)")
+    pagina = admin.get("/ingreso-inventario")
+    revisar(pagina.status_code == 200 and b"Ha01" in pagina.data and b'value="Ca01"' not in pagina.data
+            and b'value="P01"' not in pagina.data, "la lista ofrece Ha01 y no ofrece Ca01 ni produccion propia")
+    wb = leer_excel()
+    harina = next(f["Materia Prima"] for f in leer_tabla(*obtener_tabla(wb, "TABLA CRUCE MAESTRA MP", "TablaCruceMaestraMP"))
+                  if str(f.get("Codigo")).strip() == "Ha01")
+    costo_harina = next(f["Costo Unitario (Scraping)"] for f in leer_tabla(*obtener_tabla(wb, "TABLA CRUCE MAESTRA MP", "TablaCruceMaestraMP"))
+                        if str(f.get("Codigo")).strip() == "Ha01")
+    entrada_antes = inventario(harina, "Entrada Compra")
+
+    def factura(lineas, proveedor="Solera", codigo="F-SAAS-01"):
+        datos_formulario = {"fecha": "2026-10-03", "factura": codigo, "proveedor": proveedor, "ficha": ficha_admin,
+                            "unico": unico_de(admin.get("/ingreso-inventario")),
+                            "producto": [l[0] for l in lineas], "cantidad": [l[1] for l in lineas]}
+        return admin.post("/ingreso-inventario", data=datos_formulario)
+
+    huella_antes = huella(COPIA_TEMPORAL)
+    respuesta = factura([("HARINA FLORES 5 KG", "2")])
+    revisar(huella(COPIA_TEMPORAL) == huella_antes and "Quiso decir".encode() in respuesta.data,
+            "nombre mal escrito: rechazado y el robot sugiere el nombre correcto")
+    respuesta = factura([("Ca01", "1")])
+    revisar(huella(COPIA_TEMPORAL) == huella_antes and b"Cf01" in respuesta.data,
+            "cafe con el codigo Ca01: rechazado, indica comprar con Cf01 (Regla #32)")
+    respuesta = factura([("P01", "50")])
+    revisar(huella(COPIA_TEMPORAL) == huella_antes and b"Hornadas" in respuesta.data,
+            "produccion propia (P01): rechazada, se registra en Hornadas")
+    respuesta = factura([("Ha01", "2")], proveedor="")
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "sin proveedor: rechazada, no se escribe nada")
+    respuesta = factura([("Ha01", "2"), ("L01", "3")])
+    revisar(respuesta.status_code == 302, "factura F-SAAS-01 con 2 lineas: aceptada")
+    ws_i, tabla_i = obtener_tabla(leer_excel(), "Ingreso de Inventario", "TablaIngresos")
+    nuevas = [f for f in leer_tabla(ws_i, tabla_i) if f.get("Factura") == "F-SAAS-01"]
+    revisar(len(nuevas) == 2 and nuevas[0].get("Compra externa") == harina and nuevas[0].get("Cantidad Compras") == 2
+            and nuevas[0].get("Proveedor") == "Solera", "2 filas nuevas en TablaIngresos con el nombre exacto y el proveedor")
+    revisar(nuevas[0].get("Precio unitario") == costo_harina and round(nuevas[0].get("Total Compra Externa"), 2) == round(2 * costo_harina, 2),
+            f"costo congelado de la TCM ({costo_harina:,.2f}); nadie digito el precio (Regla #33)")
+    revisar(ultimo_evento().get("TIPO_EVENTO") == "INGRESO_INVENTARIO" and ultimo_evento().get("ID_ENTIDAD") == "F-SAAS-01",
+            "evento INGRESO_INVENTARIO de la factura")
+    revisar(inventario(harina, "Entrada Compra") == round(entrada_antes + 2, 2),
+            f"el Excel sumo la compra al inventario de harina: {entrada_antes:g} -> {entrada_antes + 2:g}")
+    huella_antes = huella(COPIA_TEMPORAL)
+    factura([("Ha01", "2"), ("L01", "3")])
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "la misma factura otra vez: duplicada, no se escribe nada")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")

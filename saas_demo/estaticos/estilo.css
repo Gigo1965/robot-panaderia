@@ -55,7 +55,16 @@ code { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; }
 .franja { margin: 0; background: var(--trigo-claro); color: #4d3606; border-bottom: 1px solid #e2cf9a; font-size: 0.92rem; }
 .franja__texto { padding-top: 0.5rem; padding-bottom: 0.5rem; }
 
-.principal { padding-top: 2rem; padding-bottom: 2.5rem; }
+/* ---------- Marco: menu de modulos a la izquierda y contenido a la derecha ---------- */
+.marco { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 2.5rem; align-items: start; }
+.marco--solo { display: block; }
+.principal { padding-top: 2rem; padding-bottom: 2.5rem; min-width: 0; }
+.menu { padding-top: 2.2rem; position: sticky; top: 0; }
+.menu__grupo { font-family: var(--titulos); font-weight: 700; font-size: 1.05rem; margin: 0 0 0.4rem; }
+.menu__lista { list-style: none; margin: 0 0 1.5rem; padding: 0; border-left: 2px solid var(--linea); }
+.menu__enlace { display: block; padding: 0.35rem 0.75rem; margin-left: -2px; border-left: 2px solid transparent; color: var(--tenue); text-decoration: none; }
+.menu__enlace:hover { color: var(--tinta); }
+.menu__enlace--activo { color: var(--tinta); font-weight: 600; border-left-color: var(--sabana); }
 
 /* ---------- Botones ---------- */
 .boton {
@@ -166,7 +175,34 @@ code { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; }
   padding: 0.55rem 0.7rem; border: 1.5px solid #aab4ac; border-radius: 6px;
 }
 .formulario textarea { resize: vertical; }
+.formulario input[type=number], .formulario input[type=date], .formulario select {
+  display: block; width: 100%; font: inherit; color: var(--tinta); background: var(--blanco);
+  padding: 0.55rem 0.7rem; border: 1.5px solid #aab4ac; border-radius: 6px;
+}
 .formulario .boton { margin-top: 1rem; }
+.formulario--fila { display: flex; flex-wrap: wrap; gap: 0 1rem; align-items: flex-end; }
+.campo { flex: 1 1 10rem; }
+.campo--ancho { flex: 3 1 18rem; }
+.campo--corto { flex: 0 1 11rem; }
+
+/* ---------- Pantallas de captura ---------- */
+.captura { background: var(--blanco); border: 1px solid var(--linea); padding: 1.25rem 1.5rem 1.4rem; margin-bottom: 2rem; }
+.captura h2 { margin-bottom: 0.25rem; }
+.subtitulo { margin: 0 0 0.5rem; }
+.nota { color: var(--tenue); font-size: 0.92rem; margin: 0.75rem 0 0.75rem; max-width: 46rem; }
+.lineas { width: 100%; max-width: 44rem; border-collapse: collapse; margin-top: 1.25rem; }
+.lineas th { text-align: left; font-size: 0.85rem; font-weight: 600; color: var(--tenue); padding: 0 0.5rem 0.3rem 0; }
+.lineas td { padding: 0 0.5rem 0.4rem 0; }
+.lineas td:last-child, .lineas th:last-child { width: 8rem; padding-right: 0; }
+.comanda-en-curso { max-width: 44rem; margin-top: 1.25rem; }
+.comanda-en-curso td, .comanda-en-curso th { padding-right: 0.75rem; }
+.cobro { display: flex; justify-content: space-between; align-items: baseline; max-width: 44rem; margin: 0.9rem 0 0; font-size: 1.05rem; }
+.cobro strong { font-family: var(--titulos); font-size: 2rem; font-variant-numeric: tabular-nums; }
+.cobro__botones { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.75rem; }
+.enlace { font: inherit; color: var(--vino); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+.vacio--corto { padding: 1rem 0 0; }
+.como .comandas { margin-top: 0.75rem; }
+details.como { margin-bottom: 2rem; }
 
 .como { color: var(--tenue); font-size: 0.95rem; }
 .como summary { cursor: pointer; font-weight: 600; color: var(--tinta); }
@@ -181,13 +217,18 @@ code { font-family: Consolas, "Courier New", monospace; font-size: 0.92em; }
 .problema { max-width: 40rem; margin-left: 0; }
 .problema h1 { margin-bottom: 0.75rem; }
 
-.pie { color: var(--tenue); font-size: 0.88rem; padding-bottom: 2rem; }
+.pie { color: var(--tenue); font-size: 0.88rem; margin-top: 2.5rem; }
 .pie p { border-top: 1px solid var(--linea); padding-top: 1rem; }
 .pie__enlace { margin-left: 0.75rem; }
 
 /* ---------- Pantallas angostas: cada pedido es un bloque ---------- */
 @media (max-width: 56rem) {
   .detalle { grid-template-columns: 1fr; gap: 2rem; }
+  .marco { display: block; }
+  .menu { position: static; padding-top: 1.25rem; }
+  .menu__lista { display: flex; flex-wrap: wrap; gap: 0 0.25rem; border-left: 0; margin-bottom: 0.25rem; }
+  .menu__enlace { border-left: 0; border-bottom: 2px solid transparent; margin-left: 0; padding: 0.3rem 0.6rem 0.3rem 0; }
+  .menu__enlace--activo { border-bottom-color: var(--sabana); }
   .comandas, .comandas tbody, .comandas tr, .comandas th, .comandas td { display: block; }
   .comandas { border: 0; background: transparent; }
   .comandas thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

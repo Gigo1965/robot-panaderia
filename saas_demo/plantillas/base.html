@@ -33,31 +33,48 @@
     </span>
   </p>
 
-  <main class="ancho principal">
-    {% with avisos = get_flashed_messages(with_categories=true) %}
-    {% if avisos %}
-    <div class="avisos" role="status">
-      {% for clase, texto in avisos %}<p class="aviso aviso--{{ clase }}">{{ texto }}</p>{% endfor %}
-    </div>
+  <div class="ancho marco{% if not rol %} marco--solo{% endif %}">
+    {% if rol %}
+    <nav class="menu" aria-label="Módulos">
+      {% for titulo, enlaces in menu %}
+      <p class="menu__grupo">{{ titulo }}</p>
+      <ul class="menu__lista">
+        {% for texto, vista, solo_admin in enlaces %}{% if es_admin or not solo_admin %}
+        {% set activo = ruta == vista or (vista == 'pedidos' and ruta in ('pedido', 'entregar', 'anular')) %}
+        <li><a class="menu__enlace{% if activo %} menu__enlace--activo{% endif %}" href="{{ url_for(vista) }}"
+               {% if activo %}aria-current="page"{% endif %}>{{ texto }}</a></li>
+        {% endif %}{% endfor %}
+      </ul>
+      {% endfor %}
+    </nav>
     {% endif %}
-    {% endwith %}
 
-    <p class="guardando" id="guardando" hidden>
-      Guardando en el Excel. Tarda unos 15 segundos: el robot descarga el archivo, escribe,
-      recalcula las fórmulas y lo vuelve a subir. No cierres esta página.
-    </p>
+    <main class="principal">
+      {% with avisos = get_flashed_messages(with_categories=true) %}
+      {% if avisos %}
+      <div class="avisos" role="status">
+        {% for clase, texto in avisos %}<p class="aviso aviso--{{ clase }}">{{ texto }}</p>{% endfor %}
+      </div>
+      {% endif %}
+      {% endwith %}
 
-    {% block contenido %}{% endblock %}
-  </main>
+      <p class="guardando" id="guardando" hidden>
+        Guardando en el Excel. Tarda unos 15 segundos: el robot descarga el archivo, escribe,
+        recalcula las fórmulas y lo vuelve a subir. No cierres esta página.
+      </p>
 
-  {% if libro %}
-  <footer class="ancho pie">
-    <p>
-      Excel leído a las {{ libro.leido|hora }}: <strong>{{ libro.archivo }}</strong>{% if libro.version %} (versión {{ libro.version }} de Drive){% endif %}
-      <a class="pie__enlace" href="{{ url_for('pedidos', ver=filtro or 'por-entregar', actualizar=1) }}">Leer de nuevo</a>
-    </p>
-  </footer>
-  {% endif %}
+      {% block contenido %}{% endblock %}
+
+      {% if libro %}
+      <footer class="pie">
+        <p>
+          Excel leído a las {{ libro.leido|hora }}: <strong>{{ libro.archivo }}</strong>{% if libro.version %} (versión {{ libro.version }} de Drive){% endif %}
+          <a class="pie__enlace" href="{{ request.path }}?actualizar=1">Leer de nuevo</a>
+        </p>
+      </footer>
+      {% endif %}
+    </main>
+  </div>
   <script src="{{ url_for('static', filename='pantalla.js') }}"></script>
 </body>
 </html>

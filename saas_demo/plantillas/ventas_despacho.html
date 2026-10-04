@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block titulo %}Ventas despacho{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Ventas despacho</h1>
+  <p class="encabezado__resumen">Venta de mostrador. Armas la comanda con lo que lleva el cliente y ves el total a cobrar; al registrar, el robot escribe una fila por producto con la fecha, la hora y el precio, y el Excel rebaja el inventario.</p>
+</div>
+
+{% if descuento.motivo %}
+<p class="aviso aviso--aviso">Hoy es {{ descuento.motivo }}: {{ '%g'|format(descuento.pct) }} % de descuento en todos los productos y no hay combos. Los precios de la lista ya traen el descuento.</p>
+{% endif %}
+
+<section class="captura">
+  <h2>Comanda del cliente</h2>
+  <form method="post" action="{{ url_for('grupo1.agregar_a_comanda') }}" class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--ancho">
+      <label for="producto">Producto</label>
+      <select id="producto" name="producto" required>
+        <option value="">Elige un producto</option>
+        {% for p in productos %}
+        <option value="{{ p.codigo }}">{{ p.nombre }} ({{ p.codigo }}), {{ p.precio|colones }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="cantidad">Cantidad</label>
+      <input id="cantidad" name="cantidad" type="number" min="1" max="9999" step="1" inputmode="numeric" required>
+    </div>
+    <button class="boton boton--secundario" type="submit">Agregar a la comanda</button>
+  </form>
+  <p class="nota">La lista trae los productos de la tabla cruce maestra y solo los combos que están activos hoy. Agregar no escribe en el Excel; se escribe al registrar la venta.</p>
+
+  {% if problema_comanda %}
+  <p class="aviso aviso--error">La comanda ya no se puede vender así: {{ problema_comanda }} Vacíala y ármala de nuevo.</p>
+  <form method="post" action="{{ url_for('grupo1.quitar_de_comanda') }}">
+    <input type="hidden" name="ficha" value="{{ ficha }}"><input type="hidden" name="producto" value="*">
+    <button class="boton boton--secundario" type="submit">Vaciar la comanda</button>
+  </form>
+  {% elif cotizacion %}
+  <table class="tiquete__lineas comanda-en-curso">
+    <thead><tr><th scope="col" class="num">Cant.</th><th scope="col">Producto</th><th scope="col" class="num">Precio</th><th scope="col" class="num">Total</th><th scope="col"><span class="oculto">Quitar</span></th></tr></thead>
+    <tbody>
+      {% for l in cotizacion.lineas %}
+      <tr>
+        <td class="num">{{ l.cantidad }}</td><td>{{ l.producto }}</td><td class="num">{{ l.precio|colones }}</td><td class="num">{{ l.total|colones }}</td>
+        <td class="num">
+          <form method="post" action="{{ url_for('grupo1.quitar_de_comanda') }}">
+            <input type="hidden" name="ficha" value="{{ ficha }}"><input type="hidden" name="producto" value="{{ l.codigo }}">
+            <button class="enlace" type="submit" aria-label="Quitar {{ l.producto }}">Quitar</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="cobro"><span>Total a cobrar</span> <strong>{{ cotizacion.total|colones }}</strong></p>
+  <div class="cobro__botones">
+    <form method="post" action="{{ url_for('grupo1.registrar_venta') }}" data-escribe>
+      <input type="hidden" name="ficha" value="{{ ficha }}">
+      <input type="hidden" name="unico" value="{{ unico }}">
+      <input type="hidden" name="total" value="{{ cotizacion.total }}">
+      <button class="boton boton--principal" type="submit">Registrar venta</button>
+    </form>
+    <form method="post" action="{{ url_for('grupo1.quitar_de_comanda') }}">
+      <input type="hidden" name="ficha" value="{{ ficha }}"><input type="hidden" name="producto" value="*">
+      <button class="boton boton--secundario" type="submit">Vaciar la comanda</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="vacio vacio--corto">La comanda está vacía. Agrega los productos que lleva el cliente y verás aquí el total a cobrar.</p>
+  {% endif %}
+</section>
+
+<h2 class="subtitulo">Últimas ventas</h2>
+{% if not ventas %}
+<p class="vacio">Todavía no hay ventas de despacho en el Excel.</p>
+{% else %}
+<p class="nota">Las {{ ventas|length }} más recientes de {{ total_ventas }}. Antes de anular una venta se consulta al gerente.</p>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fecha</th>
+      <th scope="col">Producto</th>
+      <th scope="col" class="num">Cantidad</th>
+      <th scope="col" class="num">Precio</th>
+      <th scope="col" class="num">Total</th>
+      <th scope="col">Estado</th>
+      <th scope="col"><span class="oculto">Acciones</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for v in ventas %}
+    <tr class="{% if v.anulada %}comanda--anulado{% endif %}">
+      <td data-titulo="Fecha">{{ v.momento|fecha }}<span class="comanda__hora">{{ v.momento|hora }}</span></td>
+      <td data-titulo="Producto">{{ v.producto }}</td>
+      <td data-titulo="Cantidad" class="num">{{ v.cantidad }}</td>
+      <td data-titulo="Precio" class="num">{{ v.precio|colones }}</td>
+      <td data-titulo="Total" class="num">{{ v.total|colones }}</td>
+      <td data-titulo="Estado">{% if v.anulada %}<span class="sello sello--anulado">Anulada</span>{% else %}<span class="sello sello--entregado">Correcta</span>{% endif %}</td>
+      <td class="comanda__acciones">
+        {% if not v.anulada %}
+        <form method="post" action="{{ url_for('grupo1.anular_venta') }}" data-escribe
+              data-confirmar="¿Anular la venta de {{ v.cantidad }} x {{ v.producto }}? Solo cambia el estado; la venta no se borra.">
+          <input type="hidden" name="ficha" value="{{ ficha }}">
+          <input type="hidden" name="fila" value="{{ v.fila }}">
+          <button class="boton boton--secundario" type="submit">Anular</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

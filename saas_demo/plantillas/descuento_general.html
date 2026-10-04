@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block titulo %}Descuento de día de pago{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Descuento de día de pago y feriado</h1>
+  <p class="encabezado__resumen">Es el porcentaje que se rebaja del precio de venta de todos los productos sueltos los días de pago (15 y 30) y los feriados, en el mostrador y en el bot. No aplica a los combos: el combo ya trae su precio especial.</p>
+</div>
+
+<section class="captura">
+  <h2>Hoy está en {{ '%g'|format(actual) }} %</h2>
+  <form method="post" action="{{ url_for('grupo1.descuento_general') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--corto">
+      <label for="porcentaje">Descuento nuevo (%)</label>
+      <input id="porcentaje" name="porcentaje" type="number" min="0" max="{{ maximo }}" step="0.5" value="{{ '%g'|format(actual) }}" inputmode="decimal" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar descuento</button>
+  </form>
+  <p class="nota">Se acepta de 0 % a {{ maximo }} %. El valor se guarda en la hoja Interface digital, celda B5, y el cambio queda en RegistroEventos con el valor anterior y el nuevo.</p>
+</section>
+{% endblock %}

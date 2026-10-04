@@ -21,12 +21,12 @@ import logging
 import secrets
 import time
 from datetime import date, datetime, time as hora_del_dia, timedelta
-from functools import wraps
 
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 
 from . import config                       # PRIMERO (prepara el entorno del robot)
 from . import datos                        # noqa: E402
+from .seguridad import NOMBRE_ROL, con_sesion, solo_administracion     # noqa: E402
 from conexion_drive import ConflictoDeVersion, ErrorConexionExcel                     # noqa: E402
 from microservicios.grupo1_captura_operativa import pedidos_digitales as pd          # noqa: E402
 
@@ -44,8 +44,17 @@ app.config.update(
     MAX_CONTENT_LENGTH=64 * 1024,
 )
 
-NOMBRE_ROL = {config.ROL_DESPACHO: "Despacho", config.ROL_ADMIN: "Administración"}
 LARGO_MAXIMO_MOTIVO = 200
+# Menu del SaaS: los grupos y hojas en el MISMO orden del Excel maestro y del libro de mapas.
+# (titulo del grupo, [(texto, vista, solo_administracion), ...]). Se agregan al construir cada grupo.
+MENU = [
+    ("1 Captura operativa", [
+        ("Ventas despacho", "grupo1.ventas_despacho", False),
+        ("Pedidos digitales", "pedidos", False),
+        ("Descuento de día de pago", "grupo1.descuento_general", True),
+        ("Ingreso de inventario", "grupo1.ingreso_inventario", True),
+    ]),
+]
 _intentos = {}          # direccion -> [fallos, bloqueado_hasta]
 
 
@@ -94,6 +103,8 @@ def _para_todas_las_pantallas():
         "ensayo": config.ENSAYO,
         # Solo en el ENSAYO de la PC (copia temporal) se muestran las claves de prueba.
         "cuentas_ensayo": list(config.USUARIOS.values()) if config.ENSAYO else [],
+        "menu": MENU,
+        "ruta": request.endpoint or "",
     }
 
 
@@ -119,27 +130,6 @@ def _cabeceras(respuesta):
     if not request.path.startswith("/estaticos/"):
         respuesta.headers["Cache-Control"] = "no-store"
     return respuesta
-
-
-def con_sesion(vista):
-    @wraps(vista)
-    def envoltura(*args, **kwargs):
-        if session.get("rol") not in NOMBRE_ROL:
-            return redirect(url_for("entrar"))
-        return vista(*args, **kwargs)
-    return envoltura
-
-
-def solo_administracion(vista):
-    """El permiso se revisa en el SERVIDOR: esconder el boton no basta (#54)."""
-    @wraps(vista)
-    @con_sesion
-    def envoltura(*args, **kwargs):
-        if session.get("rol") != config.ROL_ADMIN:
-            log.warning("Anulacion rechazada: el usuario %s no es de administracion", session.get("usuario"))
-            abort(403, "Solo administración puede anular un pedido.")
-        return vista(*args, **kwargs)
-    return envoltura
 
 
 def _direccion():
@@ -305,6 +295,14 @@ def anular(id_pedido):
     flash(f"{encontrado['id']} quedó anulado ({resultado['id_anulacion']}, "
           f"{colones(resultado['total_revertido'])}). Guardado en el Excel en {segundos} s.", "ok")
     return redirect(url_for("pedido", id_pedido=encontrado["id"]))
+
+
+# ----------------------------------------------------------------------------
+# Modulos por grupo (un archivo por grupo de microservicios, en el orden del Excel)
+# ----------------------------------------------------------------------------
+from .grupo1 import grupo1          # noqa: E402  Ventas despacho, descuento general, Ingreso de Inventario
+
+app.register_blueprint(grupo1)
 
 
 # ----------------------------------------------------------------------------

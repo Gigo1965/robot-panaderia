@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block titulo %}Ingreso de inventario{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Ingreso de inventario</h1>
+  <p class="encabezado__resumen">Registro de una compra. Tú pones la fecha, la factura, el proveedor y las cantidades; el costo lo toma el robot de la tabla cruce maestra y queda congelado. La producción propia no se registra aquí: entra con la hornada.</p>
+</div>
+
+<section class="captura">
+  <h2>Registrar una factura</h2>
+  <form method="post" action="{{ url_for('grupo1.ingreso_inventario') }}" data-escribe class="formulario">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="unico" value="{{ unico }}">
+    <div class="formulario--fila">
+      <div class="campo campo--corto">
+        <label for="fecha">Fecha</label>
+        <input id="fecha" name="fecha" type="date" value="{{ valores.fecha }}" required>
+      </div>
+      <div class="campo campo--corto">
+        <label for="factura">Factura</label>
+        <input id="factura" name="factura" type="text" maxlength="30" value="{{ valores.factura }}" placeholder="F007" required>
+      </div>
+      <div class="campo campo--ancho">
+        <label for="proveedor">Proveedor</label>
+        <input id="proveedor" name="proveedor" type="text" maxlength="60" value="{{ valores.proveedor }}" list="lista-proveedores" required>
+        <datalist id="lista-proveedores">{% for p in proveedores %}<option value="{{ p }}">{% endfor %}</datalist>
+      </div>
+    </div>
+
+    <table class="lineas">
+      <thead><tr><th scope="col">Producto (código o nombre exacto)</th><th scope="col">Cantidad</th></tr></thead>
+      <tbody>
+        {% for producto, cantidad in valores.lineas %}
+        <tr>
+          <td><input name="producto" type="text" maxlength="120" value="{{ producto }}" list="lista-productos" aria-label="Producto de la línea {{ loop.index }}" autocomplete="off"></td>
+          <td><input name="cantidad" type="number" min="1" max="9999" step="1" value="{{ cantidad }}" inputmode="numeric" aria-label="Cantidad de la línea {{ loop.index }}"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <datalist id="lista-productos">{% for p in productos %}<option value="{{ p.codigo }}">{{ p.nombre }}</option>{% endfor %}</datalist>
+    <p class="nota">Escribe unas letras y elige de la lista, o escribe el código. Las líneas vacías se ignoran. La factura entra completa o no entra.</p>
+    <button class="boton boton--principal" type="submit">Registrar factura</button>
+  </form>
+</section>
+
+<details class="como">
+  <summary>Productos que se pueden comprar ({{ productos|length }})</summary>
+  <table class="comandas">
+    <thead><tr><th scope="col">Código</th><th scope="col">Producto</th><th scope="col">Viene de</th></tr></thead>
+    <tbody>
+      {% for p in productos %}
+      <tr><td data-titulo="Código">{{ p.codigo }}</td><td data-titulo="Producto">{{ p.nombre }}</td><td data-titulo="Viene de">{{ p.origen|title }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+
+<h2 class="subtitulo">Últimos ingresos</h2>
+<p class="nota">Los {{ ingresos|length }} más recientes de {{ total_ingresos }}. Las filas de producción las escribe la hornada.</p>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fecha</th>
+      <th scope="col">Factura o lote</th>
+      <th scope="col">Producto</th>
+      <th scope="col" class="num">Cantidad</th>
+      <th scope="col" class="num">Costo unitario</th>
+      <th scope="col" class="num">Total</th>
+      <th scope="col">Proveedor</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for i in ingresos %}
+    <tr>
+      <td data-titulo="Fecha">{{ i.fecha|fecha }}</td>
+      <td data-titulo="Factura o lote">{{ i.factura }}</td>
+      <td data-titulo="Producto">{{ i.producto }}</td>
+      <td data-titulo="Cantidad" class="num">{{ i.cantidad }}</td>
+      <td data-titulo="Costo unitario" class="num">{{ i.costo|colones }}</td>
+      <td data-titulo="Total" class="num">{{ i.total|colones }}</td>
+      <td data-titulo="Proveedor">{{ i.proveedor or '' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
