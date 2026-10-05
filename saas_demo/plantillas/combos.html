@@ -3,7 +3,7 @@
 {% block contenido %}
 <div class="encabezado">
   <h1>Tabla combos dinámicos</h1>
-  <p class="encabezado__resumen">Los {{ combos|length }} combos del negocio. Cada combo se vende solo cuando su detonador se cumple con el clima del día que el robot deja en NODO INTEGRAL. El estado y el precio de oferta los calcula el Excel con sus fórmulas; la administración configura el detonador, la prioridad, el mensaje y el descuento.</p>
+  <p class="encabezado__resumen">Los {{ combos|length }} combos del negocio. Cada combo se vende solo cuando su detonador se cumple con el clima del día que el robot deja en NODO INTEGRAL. El estado y el precio de oferta los calcula el Excel con sus fórmulas; la administración configura el detonador, la prioridad, el mensaje, el descuento y lo que lleva cada combo.</p>
 </div>
 
 <section class="captura">
@@ -46,6 +46,52 @@
     {% endfor %}
   </tbody>
 </table>
+
+<h2 class="subtitulo">Qué lleva cada combo (composición)</h2>
+{% if composicion.problema %}
+<p class="aviso aviso--aviso">No se pudo leer la composición de los combos: {{ composicion.problema }}</p>
+{% else %}
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Combo</th>
+      <th scope="col">Componente</th>
+      <th scope="col">Producto</th>
+      <th scope="col" class="num">Cantidad por combo</th>
+      <th scope="col" class="num">Combos vendidos</th>
+      <th scope="col" class="num">Unidades rebajadas del inventario</th>
+      <th scope="col" class="num">Fila</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in combos %}{% set comp = composicion.combos.get(c.codigo) %}{% if comp %}
+    {% for parte in comp.componentes %}
+    <tr>
+      <td data-titulo="Combo"><strong>{{ c.nombre }}</strong> ({{ c.codigo }})</td>
+      <td data-titulo="Componente">{{ 'Producción propia' if parte.tipo == co.PROPIO else 'Reventa' }}</td>
+      <td data-titulo="Producto">{{ parte.producto }}</td>
+      <td data-titulo="Cantidad por combo" class="num">{{ '%g'|format(parte.cantidad) }}</td>
+      <td data-titulo="Combos vendidos" class="num">{{ '%g'|format(parte.vendidos) }}</td>
+      <td data-titulo="Unidades rebajadas del inventario" class="num">{{ '%g'|format(parte.unidades) }}</td>
+      <td data-titulo="Fila" class="num">{{ parte.fila }}</td>
+    </tr>
+    {% endfor %}
+    {% for parte in comp.historia %}
+    <tr>
+      <td data-titulo="Combo"><strong>{{ c.nombre }}</strong> ({{ c.codigo }})</td>
+      <td data-titulo="Componente">Historia (ya no lo lleva)</td>
+      <td data-titulo="Producto">{{ parte.producto }}</td>
+      <td data-titulo="Cantidad por combo" class="num">0</td>
+      <td data-titulo="Combos vendidos" class="num"></td>
+      <td data-titulo="Unidades rebajadas del inventario" class="num">{{ '%g'|format(parte.unidades) if parte.unidades is number else '' }}</td>
+      <td data-titulo="Fila" class="num">{{ parte.fila }}</td>
+    </tr>
+    {% endfor %}
+    {% endif %}{% endfor %}
+  </tbody>
+</table>
+<p class="nota">Cada combo lleva un producto de producción propia y uno de reventa. Las unidades rebajadas las calcula el Excel y son las que resta Control de inventario. Una fila de historia guarda lo que el combo ya rebajó de un producto que dejó de llevar.</p>
+{% endif %}
 
 {% if es_admin %}
 <h2 class="subtitulo">Configuración de cada combo</h2>
@@ -100,8 +146,52 @@
 <p class="nota">Detonador TEMPERATURA: el combo se activa cuando la temperatura del día cumple el operador y el límite (de {{ cc.VALOR_MINIMO }} a {{ cc.VALOR_MAXIMO }} grados, con un decimal). Detonador LLUVIA: se activa cuando el clima del día es el elegido; el operador y la temperatura no se usan. Feriado y día de pago no son detonadores: esos días hay descuento general y no hay combos.</p>
 <p class="nota">El descuento va de 0 a {{ cc.DESCUENTO_MAXIMO }} % y se aplica solo a la parte de producción propia del combo (Baguette o CupCake); el producto de reventa entra a su precio. La prioridad va de {{ cc.PRIORIDAD_MINIMA }} a {{ cc.PRIORIDAD_MAXIMA }} y hoy es un dato de referencia. El mensaje admite hasta {{ cc.LARGO_MAXIMO_MENSAJE }} caracteres.</p>
 <p class="nota">Cada guardado escribe solo las celdas que cambiaron en la fila del combo y deja un evento en RegistroEventos con el valor anterior y el nuevo. Las ventas ya hechas conservan su precio.</p>
+
+<h2 class="subtitulo">Composición de cada combo</h2>
+{% if composicion.problema %}
+<p class="aviso aviso--aviso">La composición no se puede cambiar ahora: {{ composicion.problema }}</p>
 {% else %}
-<p class="nota">La configuración de los combos la cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
+{% for c in combos %}{% set comp = composicion.combos.get(c.codigo) %}
+<section class="captura">
+  <h2>{{ c.nombre }} ({{ c.codigo }}): qué lleva</h2>
+  {% if comp and comp.ajustable %}
+  {% set propio = comp.componentes[0] %}{% set reventa = comp.componentes[1] %}
+  <form method="post" action="{{ url_for('grupo3.guardar_composicion') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="combo" value="{{ c.codigo }}">
+    <div class="campo campo--ancho">
+      <label for="producto1-{{ c.codigo }}">Producción propia (celda {{ propio.celdas.producto }})</label>
+      <select id="producto1-{{ c.codigo }}" name="producto_1" required>
+        {% for p in composicion.propios %}<option value="{{ p.codigo }}"{% if p.nombre == propio.producto %} selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="cantidad1-{{ c.codigo }}">Cantidad (celda {{ propio.celdas.cantidad }})</label>
+      <input id="cantidad1-{{ c.codigo }}" name="cantidad_1" type="number" min="{{ co.CANTIDAD_MINIMA }}" max="{{ co.CANTIDAD_MAXIMA }}" step="1" value="{{ '%g'|format(propio.cantidad) }}" inputmode="numeric" required>
+    </div>
+    <div class="campo campo--ancho">
+      <label for="producto2-{{ c.codigo }}">Reventa (celda {{ reventa.celdas.producto }})</label>
+      <select id="producto2-{{ c.codigo }}" name="producto_2" required>
+        {% for p in composicion.terceros %}<option value="{{ p.codigo }}"{% if p.nombre == reventa.producto %} selected{% endif %}>{{ p.nombre }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="cantidad2-{{ c.codigo }}">Cantidad (celda {{ reventa.celdas.cantidad }})</label>
+      <input id="cantidad2-{{ c.codigo }}" name="cantidad_2" type="number" min="{{ co.CANTIDAD_MINIMA }}" max="{{ co.CANTIDAD_MAXIMA }}" step="1" value="{{ '%g'|format(reventa.cantidad) }}" inputmode="numeric" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar composición de {{ c.nombre }}</button>
+  </form>
+  <p class="nota">Vendidos hasta hoy: {{ '%g'|format(propio.vendidos) }}. Ya rebajado del inventario: {{ '%g'|format(propio.unidades) }} {{ propio.producto }} y {{ '%g'|format(reventa.unidades) }} {{ reventa.producto }}. Si cambias la composición, eso queda como está y las ventas nuevas rebajan con la composición nueva.</p>
+  {% else %}
+  <p class="aviso aviso--aviso">La composición de este combo no se puede cambiar desde aquí: {{ comp.motivo if comp else 'no está en la tabla de composición' }}.</p>
+  {% endif %}
+</section>
+{% endfor %}
+<p class="nota">Un combo lleva dos componentes: uno de producción propia (Baguette o CupCake) y uno de reventa, cada uno con una cantidad entera de {{ co.CANTIDAD_MINIMA }} a {{ co.CANTIDAD_MAXIMA }}. Los productos salen de la Tabla cruce maestra. En un solo guardado el robot actualiza la tabla de composición, la fórmula del precio de oferta, el detalle del combo y, si traía el detalle anterior, el mensaje.</p>
+<p class="nota">Lo ya vendido no se modifica: cada venta conserva su precio, y lo que el combo ya rebajó del inventario queda congelado. Límite conocido: si después de un cambio se anula una venta hecha antes del cambio, el inventario devuelve las unidades de la composición nueva.</p>
+{% endif %}
+{% else %}
+<p class="nota">La configuración y la composición de los combos las cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
 {% endif %}
 
 <details class="como">
@@ -109,6 +199,6 @@
   <p>El nombre del combo es su llave y no se cambia. El estado (ACTIVO o INACTIVO) y el precio de oferta son fórmulas del Excel: se recalculan solos después de cada guardado.</p>
   <p>Cada botón llama a la función <code>actualizar_combo</code> del robot, que ubica el combo por su código y las columnas por su encabezado. Si un dato no se permite, el robot lo rechaza y no escribe nada. El texto de la columna B (el criterio en palabras) lo reescribe el robot para que coincida con el operador y el límite.</p>
   <p>Después de guardar, el robot revisa la celda Activación de Promoción de NODO INTEGRAL (el indicador Oferta hoy) y la actualiza si cambió.</p>
-  <p>Lo que lleva cada combo (su composición) todavía no se cambia desde esta pantalla.</p>
+  <p>Lo que lleva cada combo (su composición) se cambia con el segundo formulario, que llama a la función <code>actualizar_composicion</code> del robot. Antes de escribir, el robot comprueba que la fórmula del precio y la tabla de composición digan lo mismo; si no coinciden, se detiene y no escribe nada.</p>
 </details>
 {% endblock %}

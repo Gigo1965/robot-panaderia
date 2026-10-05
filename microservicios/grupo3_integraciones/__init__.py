@@ -14,4 +14,8 @@
 || 5-oct-2026: Nuevo: combos_config.py -> CONFIGURACION de cada combo de 'Tabla Combos Dinamicos'
    (G tipo de detonador, H operador, I valor limite, J prioridad, K mensaje, L descuento) para el
    SaaS (#65). Reescribe la columna B y, despues de guardar, revisa C16 (#84).
+|| 5-oct-2026 (tarde): Nuevo: combos_composicion.py -> COMPOSICION de cada combo (#85): un producto de
+   produccion propia y uno de reventa, con su cantidad. Congela lo ya rebajado del inventario en las
+   columnas G y H de TablaComposicionCombos (migracion m014, Regla #40) y reescribe la formula del
+   precio, el detalle y el mensaje en un solo guardado.
 """

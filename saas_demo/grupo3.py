@@ -17,6 +17,11 @@ Un modulo por hoja, en el orden del Excel maestro:
                              un formulario por combo, solo administracion. La columna B la reescribe el
                              robot y, despues de guardar, el robot revisa C16. La COMPOSICION del combo
                              (que productos lleva, #85) todavia no se cambia desde aqui.
+                             || 5-oct-2026 (tarde): combos_composicion.py -> la COMPOSICION de cada combo (#85):
+                             un producto de produccion propia y uno de reventa, con su cantidad (1 a 10). Segundo
+                             formulario por combo, solo administracion. El robot congela lo ya rebajado del
+                             inventario (migracion m014, Regla #40) y reescribe la formula del precio, el
+                             detalle y, si trae el detalle viejo, el mensaje.
 
 Aqui NO hay reglas de negocio: la pantalla recoge lo digitado y se lo entrega a la funcion del
 robot (actualizar_dato_manual). Si el dato no se permite, lo rechaza el robot y la pantalla
@@ -35,6 +40,7 @@ from .seguridad import con_sesion, solo_administracion                     # noq
 from conexion_drive import ConflictoDeVersion, ErrorConexionExcel          # noqa: E402
 from conexion_drive.tablas import leer_tabla, obtener_tabla                # noqa: E402
 from microservicios.grupo3_integraciones import activacion_promocion as ap  # noqa: E402
+from microservicios.grupo3_integraciones import combos_composicion as co   # noqa: E402
 from microservicios.grupo3_integraciones import combos_config as cc        # noqa: E402
 from microservicios.grupo3_integraciones import nodo_manual as nm          # noqa: E402
 
@@ -237,7 +243,15 @@ def combos():
     hoy = {"clima": _valor_en_pantalla(nodo.get("Clima Actual")),
            "temperatura": _valor_en_pantalla(nodo.get("Temperatura clima")),
            "musi": _valor_en_pantalla(nodo.get("DATA OFERTA MUSI"))}
-    return render_template("combos.html", libro=libro, combos=lista, oferta=oferta, hoy=hoy, cc=cc)
+    # La composicion (#85) se lee aparte: si esa tabla no se puede leer, el resto de la pantalla sigue funcionando.
+    try:
+        leido = co.leer_composicion(libro["wb"])
+        composicion = {"combos": {c["codigo"]: c for c in leido["combos"]}, "propios": leido["propios"],
+                       "terceros": leido["terceros"], "problema": ""}
+    except (KeyError, cc.ValorInvalido) as error:
+        composicion = {"combos": {}, "propios": [], "terceros": [], "problema": str(error)}
+    return render_template("combos.html", libro=libro, combos=lista, oferta=oferta, hoy=hoy, cc=cc,
+                           composicion=composicion, co=co)
 
 
 @grupo3.route("/combos/guardar", methods=["POST"])
@@ -267,4 +281,42 @@ def guardar_combo():
     activacion = resultado.get("activacion") or {}
     oferta = f" Oferta hoy pasó a {activacion['valor']}." if activacion.get("hubo_cambios") else ""
     flash(f"{titulo}: {cambios}.{oferta} Guardado en el Excel en {segundos} s.", "ok")
+    return redirect(url_for("grupo3.combos"))
+
+
+# ============================================================================
+# Tabla Combos Dinamicos: composicion de cada combo (#85)
+# ============================================================================
+def _cantidad_en_pantalla(valor):
+    return f"{valor:g}" if _numero(valor) is not None else str(valor)
+
+
+@grupo3.route("/combos/composicion/guardar", methods=["POST"])
+@solo_administracion
+def guardar_composicion():
+    def dato(nombre, largo):
+        return str(request.form.get(nombre) or "").strip()[:largo]
+
+    codigo = dato("combo", 12)
+    try:
+        resultado, segundos = datos.escribir(
+            f"SaaS composicion {codigo} ({session['rol']})",
+            lambda: co.actualizar_composicion(codigo, dato("producto_1", 120), dato("cantidad_1", 6),
+                                              dato("producto_2", 120), dato("cantidad_2", 6),
+                                              origen=f"SaaS ({session['rol']})"))
+    except Exception as error:          # noqa: BLE001 (cada caso se explica en _avisar)
+        _avisar(error)
+        return redirect(url_for("grupo3.combos"))
+    titulo = f"{resultado['nombre']} ({resultado['codigo']})"
+    if resultado.get("estado") == "SIN_CAMBIO":
+        flash(f"{titulo}: la composición ya era esa ({resultado['antes']}). No se escribió nada.", "aviso")
+        return redirect(url_for("grupo3.combos"))
+    congelado = "; ".join(f"{_cantidad_en_pantalla(d['unidades'])} {d['producto']}" for d in resultado["congelado"]
+                          if d["unidades"])
+    congelado = f" Lo ya rebajado del inventario queda congelado: {congelado}." if congelado else ""
+    mensaje = {"SIN_DETALLE": " El mensaje del combo no traía el detalle anterior y no se cambió: revísalo en su configuración.",
+               "MUY_LARGO": " El mensaje del combo no se cambió porque pasaría del largo permitido: revísalo en su configuración.",
+               }.get(resultado.get("mensaje"), "")
+    flash(f"{titulo}: {resultado['antes']} → {resultado['despues']}.{congelado}{mensaje} "
+          f"Guardado en el Excel en {segundos} s.", "ok")
     return redirect(url_for("grupo3.combos"))

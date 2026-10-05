@@ -30,6 +30,10 @@ Que revisa:
   N) Tabla combos dinamicos (Grupo 3, #65): la ven los dos usuarios; la configuracion de cada combo
      (detonador, operador, valor limite, prioridad, mensaje y descuento) la cambia solo administracion;
      el Excel recalcula el estado y el precio; evento con valor anterior y nuevo; el robot revisa C16.
+  O) Composicion de los combos (Grupo 3, #85): la ven los dos usuarios; la cambia solo administracion
+     (un producto de produccion propia y uno de reventa, cantidad entera de 1 a 10); el robot congela
+     lo ya rebajado del inventario y reescribe el precio, el detalle y el mensaje; evento con lo
+     anterior y lo nuevo.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
@@ -37,6 +41,7 @@ Escribe 13 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca
 || 4-oct-2026: se agregaron J y K (Grupo 2), con 5 escrituras mas; antes tardaba cerca de 2 minutos.
 || 4-oct-2026 (noche): se agregaron L y M (Grupo 3a), con 4 escrituras mas: ahora son 17 y tarda cerca de 3.5 minutos.
 || 5-oct-2026: se agrego N (combos, Grupo 3b), con 4 escrituras mas: ahora son 21 y tarda cerca de 4.5 minutos.
+|| 5-oct-2026 (tarde): se agrego O (composicion de los combos), con 3 escrituras mas: ahora son 24 y tarda cerca de 5 minutos.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
@@ -68,6 +73,7 @@ from microservicios.grupo1_captura_operativa.catalogo import Catalogo          #
 from microservicios.grupo2_inventario import existencia_minima as em          # noqa: E402
 from microservicios.grupo2_inventario import hornadas as hr                   # noqa: E402
 from microservicios.grupo3_integraciones import activacion_promocion as ap    # noqa: E402
+from microservicios.grupo3_integraciones import combos_composicion as co      # noqa: E402
 from microservicios.grupo3_integraciones import combos_config as cc           # noqa: E402
 from microservicios.grupo3_integraciones import nodo_manual as nm             # noqa: E402
 
@@ -746,6 +752,95 @@ def main():
                     and round(combos_final[k]["precio"], 2) == round(combos_inicio[k]["precio"], 2) for k in combos_inicio),
             "se devolvio la configuracion: las celdas G a L, el estado y el precio de cada combo son los del inicio")
     revisar(ap.leer_activacion()["al_dia"], "C16 'Activacion de Promocion' quedo al dia despues de los cambios")
+
+    # ------------------------------------------------------------------ O
+    paso("O) Composicion de los combos: lectura para todos; cambios solo administracion (#85)")
+
+    def composicion_de(codigo):
+        return next(c for c in co.leer_composicion()["combos"] if c["codigo"] == codigo)
+
+    def guardar_composicion(cliente, ficha, leido_combo, **cambios):
+        propio, reventa = leido_combo["componentes"]
+        formulario = {"combo": leido_combo["codigo"], "producto_1": propio["codigo_producto"],
+                      "cantidad_1": f"{propio['cantidad']:g}", "producto_2": reventa["codigo_producto"],
+                      "cantidad_2": f"{reventa['cantidad']:g}", "ficha": ficha}
+        formulario.update(cambios)
+        return cliente.post("/combos/composicion/guardar", data=formulario)
+
+    leido = co.leer_composicion()
+    combo_inicio = next(c for c in leido["combos"] if c["ajustable"])
+    codigo_combo = combo_inicio["codigo"]
+    propio_inicio, reventa_inicio = combo_inicio["componentes"]
+    otro = next(p for p in leido["terceros"] if p["nombre"] != reventa_inicio["producto"])
+    pagina = despacho.get("/combos?actualizar=1")
+    texto = html.unescape(pagina.get_data(as_text=True))
+    revisar("Qué lleva cada combo" in texto and all(parte["producto"] in texto for c in leido["combos"] for parte in c["componentes"]),
+            "despacho ve que lleva cada combo (producto, cantidad, combos vendidos y unidades rebajadas)")
+    revisar(b"/combos/composicion/guardar" not in pagina.data and b'name="producto_1"' not in pagina.data,
+            "despacho no ve los formularios de composicion")
+    huella_antes = huella(COPIA_TEMPORAL)
+    respuesta = guardar_composicion(despacho, ficha_despacho, combo_inicio, cantidad_1="9")
+    revisar(respuesta.status_code == 403 and huella(COPIA_TEMPORAL) == huella_antes,
+            "despacho no puede cambiarla: el servidor responde 403 y el Excel no cambia")
+    pagina = admin.get("/combos")
+    ajustables = [c for c in leido["combos"] if c["ajustable"]]
+    revisar(pagina.data.count(b'name="producto_1"') == len(ajustables)
+            and all(f"Guardar composición de {c['nombre']}".encode() in pagina.data for c in ajustables)
+            and pagina.data.count(b'name="codigo"') == len(leido["combos"]),
+            f"administracion ve un formulario de composicion por combo ({len(ajustables)}), ademas de los de configuracion")
+    for cambio in ({"producto_1": reventa_inicio["codigo_producto"]}, {"producto_2": propio_inicio["codigo_producto"]},
+                   {"producto_2": "Pan de yuca"}, {"cantidad_1": "0"}, {"cantidad_2": "11"}, {"cantidad_1": "2.5"},
+                   {"combo": "co99"}):
+        guardar_composicion(admin, ficha_admin, combo_inicio, **cambio)
+    pagina = admin.get("/combos")
+    revisar("El robot no lo permitió".encode() in pagina.data and huella(COPIA_TEMPORAL) == huella_antes,
+            "componente 1 de reventa, componente 2 propio, producto que no existe, cantidades 0, 11 y 2.5 y un combo "
+            "que no existe: rechazados, no se escribe nada")
+    salidas_antes = tuple(inventario(producto, "Salidas en Combos")
+                          for producto in (propio_inicio["producto"], reventa_inicio["producto"], otro["nombre"]))
+    cantidad_nueva = propio_inicio["cantidad"] + 1 if propio_inicio["cantidad"] < co.CANTIDAD_MAXIMA else propio_inicio["cantidad"] - 1
+    guardar_composicion(admin, ficha_admin, combo_inicio, cantidad_1=f"{cantidad_nueva:g}")
+    pagina = admin.get("/combos")
+    ahora = composicion_de(codigo_combo)
+    propio, reventa = ahora["componentes"]
+    revisar(propio["cantidad"] == cantidad_nueva and propio["congelados"] == propio_inicio["vendidos"]
+            and propio["rebajadas"] == propio_inicio["unidades"] and propio["unidades"] == propio_inicio["unidades"]
+            and round(ahora["precio"], 2) != round(combo_inicio["precio"], 2)
+            and ahora["detalle"] == co.texto_detalle(cantidad_nueva, propio["producto"], reventa["cantidad"], reventa["producto"]),
+            f"{ahora['nombre']}: {propio_inicio['cantidad']:g} -> {cantidad_nueva:g} {propio['producto']} (celda {propio['celdas']['cantidad']}); "
+            f"congelados {propio['congelados']:g} combos y {propio['rebajadas']:g} unidades; precio {combo_inicio['precio']:,.2f} -> "
+            f"{ahora['precio']:,.2f}; detalle '{ahora['detalle']}'")
+    revisar(b"Guardado en el Excel en" in pagina.data, "la pantalla muestra el aviso con el tiempo")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == co.TIPO_EVENTO and evento.get("ORIGEN") == "SaaS (administracion)"
+            and evento.get("ID_ENTIDAD") == codigo_combo and "->" in str(evento.get("DETALLE")),
+            f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    huella_antes = huella(COPIA_TEMPORAL)
+    guardar_composicion(admin, ficha_admin, ahora)
+    revisar(huella(COPIA_TEMPORAL) == huella_antes and "ya era esa".encode() in admin.get("/combos").data,
+            "la misma composicion otra vez: SIN_CAMBIO, no se escribe nada")
+    guardar_composicion(admin, ficha_admin, ahora, producto_2=otro["codigo"], cantidad_2="2")
+    cambiado = composicion_de(codigo_combo)
+    reventa_nueva = cambiado["componentes"][1]
+    historia = [h for h in cambiado["historia"] if h["producto"] == reventa_inicio["producto"]]
+    revisar(reventa_nueva["producto"] == otro["nombre"] and reventa_nueva["cantidad"] == 2 and reventa_nueva["unidades"] == 0
+            and (not reventa_inicio["unidades"] or (len(historia) == 1 and historia[0]["unidades"] == reventa_inicio["unidades"])),
+            f"reventa {reventa_inicio['producto']} -> 2 x {otro['nombre']}: la fila vigente empieza en 0"
+            + (f" y lo ya rebajado ({reventa_inicio['unidades']:g}) queda en la fila de historia {historia[0]['fila']}"
+               if reventa_inicio["unidades"] and historia else " (no habia nada que congelar)"))
+    texto = html.unescape(despacho.get("/combos?actualizar=1").get_data(as_text=True))
+    revisar(cambiado["detalle"] in texto and ("Historia (ya no lo lleva)" in texto) == bool(cambiado["historia"]),
+            "despacho ve la composicion nueva en la pantalla")
+    guardar_composicion(admin, ficha_admin, combo_inicio)
+    final = composicion_de(codigo_combo)
+    revisar([(c["producto"], c["cantidad"]) for c in final["componentes"]]
+            == [(c["producto"], c["cantidad"]) for c in combo_inicio["componentes"]]
+            and round(final["precio"], 2) == round(combo_inicio["precio"], 2)
+            and tuple(inventario(producto, "Salidas en Combos")
+                      for producto in (propio_inicio["producto"], reventa_inicio["producto"], otro["nombre"])) == salidas_antes,
+            f"se devolvio la composicion ({final['detalle']}): el precio y las salidas en combos del inventario son los del inicio")
+    revisar([c["codigo"] for c in cc.leer_combos()] == list(combos_inicio),
+            "los combos siguen siendo los mismos: las filas de historia no se confunden con combos")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")
