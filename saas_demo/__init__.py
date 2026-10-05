@@ -12,4 +12,5 @@ En Render es un servicio aparte del bot (ver app.py).
 || 4-oct-2026: modulos por grupo, en el orden del Excel maestro (Regla #39):
     grupo1.py  Ventas despacho, descuento de dia de pago e Ingreso de inventario
     grupo2.py  Control de inventario (existencia minima, #63) y Hornadas
+    grupo3.py  NODO INTEGRAL (celdas manuales, #64) y lectura de las dos tablas cruce maestras
 """

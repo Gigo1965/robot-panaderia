@@ -132,3 +132,7 @@ if __name__ == "__main__":
     activos, reglas = combos_activos()
     print("Combos activos ahora:", activos or "ninguno",
           "| descuento general hoy:", "SI" if reglas["descuento_general"] else "NO")
+    # || 4-oct-2026 (#84): con el Excel ya recalculado, el robot escribe 'Activacion de Promocion' (C16).
+    from .activacion_promocion import actualizar_activacion_promocion
+    promo = actualizar_activacion_promocion()
+    print(f"Activacion de Promocion ({promo['celda']}): {promo['valor']} ({promo['estado']}) | {promo['motivo']}")

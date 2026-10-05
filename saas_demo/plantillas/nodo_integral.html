@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block titulo %}NODO INTEGRAL{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>NODO INTEGRAL</h1>
+  <p class="encabezado__resumen">Es la hoja donde el robot deja los datos del día que vienen de fuera: clima, tipo de cambio, feriados, días de pago y la promoción del competidor. El bot y el Excel solo leen de aquí. De sus {{ filas|length }} filas, {{ manuales|length }} las digita la administración; las demás las escribe el robot por horario o son fórmulas.</p>
+</div>
+
+<section class="captura">
+  <h2>Oferta hoy: {% if not oferta.definido %}<span class="sello sello--anulado sello--grande">Sin definir</span>{% elif oferta.valor_celda == 'ON' %}<span class="sello sello--entregado sello--grande">ON</span>{% else %}<span class="sello sello--pendiente sello--grande">OFF</span>{% endif %}</h2>
+  {% if not oferta.definido %}
+  <p class="aviso aviso--aviso">La celda {{ oferta.celda }} (Activación de Promoción) todavía tiene el texto de relleno del Excel. Según los datos de esta hoja corresponde {{ oferta.valor }}.</p>
+  {% elif not oferta.al_dia %}
+  <p class="aviso aviso--aviso">El indicador está atrasado: la celda {{ oferta.celda }} dice {{ oferta.valor_celda }} y según los datos de esta hoja corresponde {{ oferta.valor }}.</p>
+  {% endif %}
+  <p class="nota">{% if oferta.tipo == 'COMBOS' %}Combos activos: {% for c in oferta.combos %}{{ c.codigo }} {{ c.nombre }}{% if not loop.last %}, {% endif %}{% endfor %}.{% elif oferta.tipo == 'DESCUENTO_GENERAL' %}Descuento general de {{ '%g'|format(oferta.porcentaje) }} % en todos los productos por {{ 'feriado' if oferta.detonador == 'FERIADO' else 'día de pago' }}. Ese día no hay combos.{% else %}No hay ningún combo activo y hoy no es feriado ni día de pago.{% endif %} ON significa que hoy rige una oferta: algún combo activo, o el descuento general de día de pago o feriado.</p>
+  {% if es_admin %}
+  <form method="post" action="{{ url_for('grupo3.actualizar_oferta') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <button class="boton boton--secundario" type="submit">Actualizar indicador de oferta</button>
+  </form>
+  <p class="nota">En el Excel maestro el robot actualiza esta celda en la tarea diaria. Sobre esta copia de demostración la tarea diaria no corre: el botón llama a la misma función del robot, que solo escribe si el valor cambió.</p>
+  {% else %}
+  <p class="nota">El indicador lo escribe el robot. En esta copia de demostración lo actualiza administración.</p>
+  {% endif %}
+</section>
+
+{% if es_admin %}
+<section class="captura">
+  <h2>Datos que digita la administración</h2>
+  {% for m in manuales %}
+  <form method="post" action="{{ url_for('grupo3.guardar_dato') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="campo" value="{{ m.campo }}">
+    <div class="campo campo--ancho">
+      <label for="valor-{{ m.campo }}">{{ m.definicion.titulo }} (celda {{ m.celda }})</label>
+      {% if m.definicion.tipo == 'colones' %}
+      <input id="valor-{{ m.campo }}" name="valor" type="number" min="{{ m.definicion.minimo }}" max="{{ m.definicion.maximo }}" step="{{ '1' if m.definicion.decimales == 0 else '0.01' }}" value="{{ m.valor if m.valor is number else '' }}" inputmode="decimal" required>
+      {% elif m.definicion.tipo == 'lista' %}
+      <select id="valor-{{ m.campo }}" name="valor" required>
+        {% if not m.definido %}<option value="">Sin definir: elige una opción</option>{% endif %}
+        {% for opcion in m.definicion.opciones %}
+        <option value="{{ opcion }}"{% if m.definido and m.valor|string|trim == opcion %} selected{% endif %}>{{ opcion }}</option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <input id="valor-{{ m.campo }}" name="valor" type="text" inputmode="numeric" maxlength="9" pattern="[0-9]{4}[- ]?[0-9]{4}" placeholder="8888-8888" value="{{ m.texto }}" autocomplete="off" required>
+      {% endif %}
+    </div>
+    <button class="boton boton--principal" type="submit">{{ m.boton }}</button>
+  </form>
+  <p class="nota">{{ m.nota }}{% if m.campo == 'tarifa_km' %} Se acepta de ₡1 a ₡5,000, en colones enteros; el 0 se rechaza porque sin tarifa el robot no puede cobrar el envío.{% elif m.campo == 'meta_venta' %} Se acepta de ₡0 en adelante, sin separador de miles.{% elif m.campo == 'sinpe' %} Son ocho dígitos y se guarda con el formato 8888-8888.{% endif %}</p>
+  {% endfor %}
+  <p class="nota">Cada cambio se guarda en una sola celda de la hoja NODO INTEGRAL y queda en RegistroEventos con el valor anterior y el nuevo.</p>
+</section>
+{% else %}
+<p class="nota">Los datos manuales de esta hoja los cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
+{% endif %}
+
+<h2 class="subtitulo">La hoja completa</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Celda</th>
+      <th scope="col">Categoría</th>
+      <th scope="col">Descripción</th>
+      <th scope="col">Valor</th>
+      <th scope="col">Quién lo escribe</th>
+      <th scope="col">Nota</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in filas %}
+    <tr>
+      <td data-titulo="Celda">{{ f.celda }}</td>
+      <td data-titulo="Categoría">{{ f.categoria }}</td>
+      <td data-titulo="Descripción">{{ f.descripcion }}</td>
+      <td data-titulo="Valor">{% if f.definido %}<strong>{{ f.texto }}</strong>{% else %}<strong>Sin definir</strong> (el Excel dice: {{ f.texto }}){% endif %}</td>
+      <td data-titulo="Quién lo escribe">{% if f.clase == 'manual' %}<span class="sello sello--pendiente">Administración</span>{% elif f.clase == 'sin_efecto' %}<span class="sello sello--anulado">Sin efecto</span>{% else %}{{ f.accion_usuario }}{% endif %}</td>
+      <td data-titulo="Nota">{% if f.clase == 'lectura' %}{{ f.accion_robot }}{% else %}{{ f.nota }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>Las filas que dicen Bloqueado (Lectura) las escribe el robot en la tarea diaria o con cada pedido, y las que dicen Automático (Fórmula) las calcula el Excel a partir de la tabla de combos. Desde aquí no se pueden cambiar.</p>
+  <p>Cada botón llama a la función <code>actualizar_dato_manual</code> del robot, que ubica la celda por su descripción y escribe solo esa celda. Si el dato no se permite, el robot lo rechaza y no escribe nada.</p>
+  <p>La fila Activación de Promoción (el indicador Oferta hoy) la escribe el robot con la función <code>actualizar_activacion_promocion</code>: usa el mismo catálogo del bot y del mostrador, y deja un evento cada vez que el valor cambia.</p>
+  <p>Las dos filas marcadas Sin efecto se conservan en el Excel tal como están, pero ya no se usan: en feriado y en día de pago hay un descuento general y no hay combos.</p>
+</details>
+{% endblock %}

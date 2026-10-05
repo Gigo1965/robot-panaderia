@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block titulo %}{{ definicion.titulo }}{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>{{ definicion.titulo }}</h1>
+  {% if clave == 'tcm' %}
+  <p class="encabezado__resumen">Los {{ filas|length }} productos que se venden, con su costo y su precio de venta. De esta tabla leen el precio el mostrador, el bot y los combos. Aquí nadie digita: la mantienen el robot y las fórmulas del Excel.</p>
+  {% else %}
+  <p class="encabezado__resumen">Las {{ filas|length }} materias primas y empaques que se compran al proveedor, con el costo del paquete y el costo por gramo o pieza que usan las recetas. Aquí nadie digita: la mantienen el robot y las fórmulas del Excel.</p>
+  {% endif %}
+</div>
+
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      {% for encabezado, titulo, forma in definicion.columnas %}
+      <th scope="col"{% if forma != 'texto' %} class="num"{% endif %}>{{ titulo }}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in filas %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      {% for c in f.celdas %}
+      <td data-titulo="{{ c.titulo }}"{% if c.num %} class="num"{% endif %}>{{ c.texto }}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja {{ definicion.hoja }}, tabla {{ definicion.tabla }} ({{ rango }}). Pantalla de solo lectura.</p>
+
+<details class="como">
+  <summary>Quién escribe esta tabla</summary>
+  {% if clave == 'tcm' %}
+  <p>El costo de Baguette y CupCake es una fórmula que trae el costo de la última hornada desde su hoja de costo. Su precio de venta es el precio de referencia que la administración define en esa misma hoja de costo.</p>
+  <p>El costo de los productos que se compran para revender lo actualiza el robot una vez al día con la API de catálogo del proveedor. Si la lectura falla, la celda no se toca y conserva el último costo. Su precio de venta es una fórmula sobre ese costo.</p>
+  <p>El nombre técnico es la llave con que las demás hojas buscan el producto: solo se cambia con una migración.</p>
+  {% else %}
+  <p>El costo del paquete lo actualiza el robot una vez al día con la API de catálogo del proveedor. Si el proveedor no responde desde la nube, el robot usa el respaldo manual de Drive; si tampoco hay respaldo, la celda no se toca.</p>
+  <p>El costo por gramo o pieza es una fórmula: el costo del paquete dividido entre su contenido. Las hojas de costo lo multiplican por los gramos de cada receta.</p>
+  <p>El nombre de la materia prima es la llave con que las demás hojas la buscan: solo se cambia con una migración.</p>
+  {% endif %}
+</details>
+{% endblock %}

@@ -21,11 +21,18 @@ Que revisa:
      hasta 2 decimales; el estado lo recalcula el Excel; evento con valor anterior y nuevo.
   K) Hornadas (Grupo 2): despacho registra y anula; sin materia prima no hay hornada (Regla #34);
      el Excel suma la produccion y rebaja la materia prima; al anular todo vuelve a su valor.
+  L) NODO INTEGRAL (Grupo 3, #64): lo ven los dos usuarios; las celdas manuales (C3 tarifa por km,
+     C4 meta, C8 accion Meta Ads, C22 SINPE) las cambia solo administracion; C14 y C15 solo lectura;
+     'Interface digital' B4 lee la tarifa nueva; evento con valor anterior y nuevo.
+     "Oferta hoy" (C16 'Activacion de Promocion', #84): la escribe el robot; en la copia la actualiza
+     administracion con un boton; despacho la ve pero no la puede actualizar.
+  M) Tablas cruce maestras (Grupo 3): solo lectura para los dos usuarios, sin formularios.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
 Escribe 13 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca de 3 minutos.
 || 4-oct-2026: se agregaron J y K (Grupo 2), con 5 escrituras mas; antes tardaba cerca de 2 minutos.
+|| 4-oct-2026 (noche): se agregaron L y M (Grupo 3a), con 4 escrituras mas: ahora son 17 y tarda cerca de 3.5 minutos.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
@@ -56,6 +63,8 @@ from microservicios.grupo1_captura_operativa import pedidos_digitales as pd   # 
 from microservicios.grupo1_captura_operativa.catalogo import Catalogo          # noqa: E402
 from microservicios.grupo2_inventario import existencia_minima as em          # noqa: E402
 from microservicios.grupo2_inventario import hornadas as hr                   # noqa: E402
+from microservicios.grupo3_integraciones import activacion_promocion as ap    # noqa: E402
+from microservicios.grupo3_integraciones import nodo_manual as nm             # noqa: E402
 
 errores = []
 
@@ -552,6 +561,104 @@ def main():
     respuesta = despacho.post("/hornadas/anular", data={"producto": "L01", "ficha": ficha_despacho})
     revisar(respuesta.status_code == 404 and huella(COPIA_TEMPORAL) == huella_antes,
             "anular un producto que no es de produccion propia: 404, no se escribe nada")
+
+    # ------------------------------------------------------------------ L
+    paso("L) NODO INTEGRAL: lectura para todos; celdas manuales solo administracion (#64)")
+    filas_nodo = nm.leer_nodo()
+    manuales = {f["campo"]: f for f in filas_nodo if f["clase"] == "manual"}
+    pagina = despacho.get("/nodo-integral")
+    texto = html.unescape(pagina.get_data(as_text=True))
+    revisar(pagina.status_code == 200 and all(f["descripcion"] in texto for f in filas_nodo),
+            f"despacho ve las {len(filas_nodo)} filas de 'NODO INTEGRAL'")
+    revisar(b"Guardar tarifa" not in pagina.data and b'name="campo"' not in pagina.data,
+            "despacho no ve los formularios de las celdas manuales")
+    revisar(set(manuales) == set(nm.CAMPOS) and [f["celda"] for f in filas_nodo if f["clase"] == "sin_efecto"] == ["C14", "C15"],
+            "manuales: C3, C4, C8 y C22; solo lectura por la Regla #8: C14 y C15")
+
+    def dato(cliente, ficha, campo, valor):
+        return cliente.post("/nodo-integral/guardar", data={"campo": campo, "valor": valor, "ficha": ficha})
+
+    tarifa_inicial = manuales["tarifa_km"]["valor"]
+    huella_antes = huella(COPIA_TEMPORAL)
+    respuesta = dato(despacho, ficha_despacho, "tarifa_km", "600")
+    revisar(respuesta.status_code == 403 and huella(COPIA_TEMPORAL) == huella_antes,
+            "despacho no puede cambiarlas: el servidor responde 403 y el Excel no cambia")
+    pagina = admin.get("/nodo-integral")
+    revisar(all(texto_boton.encode() in pagina.data for texto_boton in
+                ("Guardar tarifa", "Guardar meta", "Guardar acción", "Guardar número")),
+            "administracion ve los cuatro formularios")
+    for campo, valor in (("tarifa_km", "0"), ("tarifa_km", "5001"), ("tarifa_km", "500.5"), ("meta_venta", "-1"),
+                         ("meta_ads", "Bajar"), ("sinpe", "1234"), ("oferta_feriado", "Combo 1"), ("clima", "Lluvia")):
+        dato(admin, ficha_admin, campo, valor)
+    pagina = admin.get("/nodo-integral")
+    revisar("El robot no lo permitió".encode() in pagina.data and huella(COPIA_TEMPORAL) == huella_antes,
+            "tarifa 0, 5001 y 500.5, meta -1, accion 'Bajar', SINPE de 4 digitos, C14 y una fila del robot: "
+            "rechazados, no se escribe nada")
+    nueva_tarifa = 600 if tarifa_inicial != 600 else 650
+    dato(admin, ficha_admin, "tarifa_km", str(nueva_tarifa))
+    wb = leer_excel()
+    revisar(wb[nm.HOJA]["C3"].value == nueva_tarifa and wb["Interface digital"]["B4"].value == nueva_tarifa,
+            f"Tarifa Base KM {tarifa_inicial} -> {nueva_tarifa}: celda C3, y 'Interface digital' B4 (formula) la lee")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == nm.TIPO_EVENTO and evento.get("ORIGEN") == "SaaS (administracion)"
+            and evento.get("ID_ENTIDAD") == "C3" and "->" in str(evento.get("DETALLE")),
+            f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    revisar(b"Guardado en el Excel en" in admin.get("/nodo-integral").data, "la pantalla muestra el aviso con el tiempo")
+    huella_antes = huella(COPIA_TEMPORAL)
+    dato(admin, ficha_admin, "tarifa_km", str(nueva_tarifa))
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "el mismo valor otra vez: SIN_CAMBIO, no se escribe nada")
+    nueva_accion = "Mantener" if str(manuales["meta_ads"]["valor"]).strip() == "Subir" else "Subir"
+    dato(admin, ficha_admin, "meta_ads", nueva_accion)
+    fila_ads = next(f for f in nm.leer_nodo() if f["campo"] == "meta_ads")
+    revisar(fila_ads["valor"] == nueva_accion and fila_ads["definido"],
+            f"Accion Meta Ads {manuales['meta_ads']['valor']!r} -> {nueva_accion!r} (celda C8)")
+    dato(admin, ficha_admin, "tarifa_km", str(tarifa_inicial))
+    despues = {f["celda"]: f["valor"] for f in nm.leer_nodo()}
+    revisar(all(despues[f["celda"]] == f["valor"] for f in filas_nodo if f["celda"] != "C8"),
+            f"la tarifa volvio a {tarifa_inicial}; las demas filas de la hoja nunca cambiaron")
+
+    # "Oferta hoy": C16 'Activacion de Promocion' la escribe el robot (#84)
+    oferta = ap.leer_activacion()
+    pagina = despacho.get("/nodo-integral")
+    revisar(b"Oferta hoy" in pagina.data and b"Actualizar indicador de oferta" not in pagina.data,
+            "despacho ve el indicador 'Oferta hoy' pero no el boton para actualizarlo")
+    huella_antes = huella(COPIA_TEMPORAL)
+    respuesta = despacho.post("/nodo-integral/oferta", data={"ficha": ficha_despacho})
+    revisar(respuesta.status_code == 403 and huella(COPIA_TEMPORAL) == huella_antes,
+            "despacho no puede actualizarlo: el servidor responde 403 y el Excel no cambia")
+    revisar(b"Actualizar indicador de oferta" in admin.get("/nodo-integral").data, "administracion si ve el boton")
+    admin.post("/nodo-integral/oferta", data={"ficha": ficha_admin})
+    despues_oferta = ap.leer_activacion()
+    revisar(despues_oferta["valor_celda"] == oferta["valor"] and despues_oferta["al_dia"],
+            f"C16 'Activacion de Promocion': {oferta['valor_celda']!r} -> {despues_oferta['valor_celda']!r} ({despues_oferta['motivo']})")
+    if not oferta["al_dia"]:
+        evento = ultimo_evento()
+        revisar(evento.get("TIPO_EVENTO") == ap.TIPO_EVENTO and evento.get("ORIGEN") == "SaaS (administracion)"
+                and evento.get("ID_ENTIDAD") == "C16", f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    huella_antes = huella(COPIA_TEMPORAL)
+    admin.post("/nodo-integral/oferta", data={"ficha": ficha_admin})
+    pagina = admin.get("/nodo-integral")
+    revisar(huella(COPIA_TEMPORAL) == huella_antes and "ya estaba al día".encode() in pagina.data,
+            "actualizar otra vez: ya estaba al dia, no se escribe nada")
+    texto = html.unescape(pagina.get_data(as_text=True))
+    revisar(f'sello--grande">{despues_oferta["valor_celda"]}<' in texto
+            and all(c["codigo"] in texto for c in despues_oferta["combos"]),
+            f"la pantalla dice Oferta hoy: {despues_oferta['valor_celda']}, con el detalle")
+
+    # ------------------------------------------------------------------ M
+    paso("M) Tablas cruce maestras: solo lectura para los dos usuarios")
+    for ruta, hoja, nombre_tabla, llave in (("/tabla-cruce-maestra", "TABLA CRUCE MAESTRA", "TablaProductos", "Nombre tecnico completo"),
+                                            ("/tabla-cruce-maestra-mp", "TABLA CRUCE MAESTRA MP", "TablaCruceMaestraMP", "Materia Prima")):
+        ws, tabla = obtener_tabla(leer_excel(), hoja, nombre_tabla)
+        registros = [r for r in leer_tabla(ws, tabla) if str(r.get(llave) or "").strip()]
+        nombres = [str(r[llave]).strip() for r in registros]
+        codigos = [str(r.get("Codigo") or "").strip() for r in registros]
+        for nombre_cliente, cliente in (("despacho", despacho), ("administracion", admin)):
+            pagina = cliente.get(ruta)
+            texto = html.unescape(pagina.get_data(as_text=True))
+            revisar(pagina.status_code == 200 and all(n in texto for n in nombres) and all(c in texto for c in codigos),
+                    f"{nombre_cliente} ve los {len(nombres)} productos de '{hoja}' con su codigo")
+            revisar(b"data-escribe" not in pagina.data, f"'{hoja}' ({nombre_cliente}): sin formularios, es solo lectura")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")
