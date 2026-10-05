@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block titulo %}Tabla combos dinámicos{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Tabla combos dinámicos</h1>
+  <p class="encabezado__resumen">Los {{ combos|length }} combos del negocio. Cada combo se vende solo cuando su detonador se cumple con el clima del día que el robot deja en NODO INTEGRAL. El estado y el precio de oferta los calcula el Excel con sus fórmulas; la administración configura el detonador, la prioridad, el mensaje y el descuento.</p>
+</div>
+
+<section class="captura">
+  <h2>Hoy en NODO INTEGRAL: {{ hoy.clima }}, {{ hoy.temperatura }} °C</h2>
+  <p class="nota">Oferta hoy: <strong>{{ oferta.valor_celda if oferta.definido else 'Sin definir' }}</strong>. {% if oferta.tipo == 'COMBOS' %}Combos activos: {% for c in oferta.combos %}{{ c.codigo }} {{ c.nombre }}{% if not loop.last %}, {% endif %}{% endfor %}.{% elif oferta.tipo == 'DESCUENTO_GENERAL' %}Hoy rige el descuento general de {{ '%g'|format(oferta.porcentaje) }} % por {{ 'feriado' if oferta.detonador == 'FERIADO' else 'día de pago' }}: ese día no se vende ningún combo, aunque su detonador se cumpla.{% else %}No hay ningún combo activo.{% endif %}</p>
+  <p class="nota">En la copia de demostración el clima no se actualiza: la tarea diaria del robot consulta el clima solo para el Excel maestro. Aquí el clima y la temperatura quedan fijos, y un combo cambia de estado cuando la administración cambia su detonador o su límite.</p>
+  <p class="nota">Promoción del competidor (Musi), para comparar: {{ hoy.musi or 'sin dato' }}.</p>
+</section>
+
+<h2 class="subtitulo">Los combos</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Código</th>
+      <th scope="col">Nombre (llave)</th>
+      <th scope="col">Detalle</th>
+      <th scope="col">Estado</th>
+      <th scope="col">Detonador</th>
+      <th scope="col" class="num">Prioridad</th>
+      <th scope="col" class="num">Descuento</th>
+      <th scope="col" class="num">Precio de oferta</th>
+      <th scope="col">Mensaje SaaS / Bot</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in combos %}
+    <tr>
+      <td data-titulo="Fila">{{ c.fila }}</td>
+      <td data-titulo="Código">{{ c.codigo }}</td>
+      <td data-titulo="Nombre (llave)"><strong>{{ c.nombre }}</strong></td>
+      <td data-titulo="Detalle">{{ c.detalle }}</td>
+      <td data-titulo="Estado">{% if c.activo %}<span class="sello sello--entregado">ACTIVO</span>{% else %}<span class="sello sello--pendiente">INACTIVO</span>{% endif %}</td>
+      <td data-titulo="Detonador">{{ c.criterio }}</td>
+      <td data-titulo="Prioridad" class="num">{{ c.prioridad }}</td>
+      <td data-titulo="Descuento" class="num">{{ '%g'|format(c.descuento) }} %</td>
+      <td data-titulo="Precio de oferta" class="num">{{ c.precio_texto }}</td>
+      <td data-titulo="Mensaje SaaS / Bot">{{ c.mensaje }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if es_admin %}
+<h2 class="subtitulo">Configuración de cada combo</h2>
+{% for c in combos %}
+<section class="captura">
+  <h2>{{ c.nombre }} ({{ c.codigo }}): {{ c.detalle }}</h2>
+  {% if c.configurable %}
+  <form method="post" action="{{ url_for('grupo3.guardar_combo') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="codigo" value="{{ c.codigo }}">
+    <div class="campo campo--corto">
+      <label for="tipo-{{ c.codigo }}">Detonador (celda {{ c.celdas.tipo }})</label>
+      <select id="tipo-{{ c.codigo }}" name="tipo" required>
+        {% for opcion in cc.TIPOS %}<option value="{{ opcion }}"{% if c.tipo == opcion %} selected{% endif %}>{{ opcion }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="operador-{{ c.codigo }}">Operador (celda {{ c.celdas.operador }})</label>
+      <select id="operador-{{ c.codigo }}" name="operador">
+        {% for opcion in cc.OPERADORES %}<option value="{{ opcion }}"{% if c.operador == opcion %} selected{% endif %}>{{ opcion }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="temperatura-{{ c.codigo }}">Temperatura límite °C (celda {{ c.celdas.valor }})</label>
+      <input id="temperatura-{{ c.codigo }}" name="temperatura" type="number" min="{{ cc.VALOR_MINIMO }}" max="{{ cc.VALOR_MAXIMO }}" step="0.1" value="{{ c.temperatura }}" inputmode="decimal">
+    </div>
+    <div class="campo campo--corto">
+      <label for="lluvia-{{ c.codigo }}">Clima, si el detonador es LLUVIA (celda {{ c.celdas.valor }})</label>
+      <select id="lluvia-{{ c.codigo }}" name="lluvia">
+        {% for opcion in cc.CLIMAS %}<option value="{{ opcion }}"{% if c.lluvia == opcion %} selected{% endif %}>{{ opcion }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="prioridad-{{ c.codigo }}">Prioridad (celda {{ c.celdas.prioridad }})</label>
+      <input id="prioridad-{{ c.codigo }}" name="prioridad" type="number" min="{{ cc.PRIORIDAD_MINIMA }}" max="{{ cc.PRIORIDAD_MAXIMA }}" step="1" value="{{ c.prioridad if c.prioridad is number else '' }}" inputmode="numeric" required>
+    </div>
+    <div class="campo campo--corto">
+      <label for="descuento-{{ c.codigo }}">Descuento % (celda {{ c.celdas.descuento }})</label>
+      <input id="descuento-{{ c.codigo }}" name="descuento" type="number" min="0" max="{{ cc.DESCUENTO_MAXIMO }}" step="0.1" value="{{ '%g'|format(c.descuento) }}" inputmode="decimal" required>
+    </div>
+    <div class="campo campo--ancho">
+      <label for="mensaje-{{ c.codigo }}">Mensaje SaaS / Bot (celda {{ c.celdas.mensaje }})</label>
+      <input id="mensaje-{{ c.codigo }}" name="mensaje" type="text" maxlength="{{ cc.LARGO_MAXIMO_MENSAJE }}" value="{{ c.mensaje }}" autocomplete="off" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar {{ c.nombre }}</button>
+  </form>
+  {% else %}
+  <p class="aviso aviso--aviso">Este combo tiene el detonador {{ c.tipo or 'vacío' }}, que no es TEMPERATURA ni LLUVIA: desde aquí no se cambia.</p>
+  {% endif %}
+</section>
+{% endfor %}
+<p class="nota">Detonador TEMPERATURA: el combo se activa cuando la temperatura del día cumple el operador y el límite (de {{ cc.VALOR_MINIMO }} a {{ cc.VALOR_MAXIMO }} grados, con un decimal). Detonador LLUVIA: se activa cuando el clima del día es el elegido; el operador y la temperatura no se usan. Feriado y día de pago no son detonadores: esos días hay descuento general y no hay combos.</p>
+<p class="nota">El descuento va de 0 a {{ cc.DESCUENTO_MAXIMO }} % y se aplica solo a la parte de producción propia del combo (Baguette o CupCake); el producto de reventa entra a su precio. La prioridad va de {{ cc.PRIORIDAD_MINIMA }} a {{ cc.PRIORIDAD_MAXIMA }} y hoy es un dato de referencia. El mensaje admite hasta {{ cc.LARGO_MAXIMO_MENSAJE }} caracteres.</p>
+<p class="nota">Cada guardado escribe solo las celdas que cambiaron en la fila del combo y deja un evento en RegistroEventos con el valor anterior y el nuevo. Las ventas ya hechas conservan su precio.</p>
+{% else %}
+<p class="nota">La configuración de los combos la cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
+{% endif %}
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>El nombre del combo es su llave y no se cambia. El estado (ACTIVO o INACTIVO) y el precio de oferta son fórmulas del Excel: se recalculan solos después de cada guardado.</p>
+  <p>Cada botón llama a la función <code>actualizar_combo</code> del robot, que ubica el combo por su código y las columnas por su encabezado. Si un dato no se permite, el robot lo rechaza y no escribe nada. El texto de la columna B (el criterio en palabras) lo reescribe el robot para que coincida con el operador y el límite.</p>
+  <p>Después de guardar, el robot revisa la celda Activación de Promoción de NODO INTEGRAL (el indicador Oferta hoy) y la actualiza si cambió.</p>
+  <p>Lo que lleva cada combo (su composición) todavía no se cambia desde esta pantalla.</p>
+</details>
+{% endblock %}

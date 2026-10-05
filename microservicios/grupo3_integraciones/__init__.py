@@ -11,4 +11,7 @@
    Nuevo: activacion_promocion.py -> el robot escribe 'Activacion de Promocion' (C16): ON si hay
    combos activos o descuento general de dia de pago / feriado (#84). La tarea diaria la llama
    al final de nodo_integral.py. || El boton del SaaS se quito (decision del usuario): la escribe solo el robot.
+|| 5-oct-2026: Nuevo: combos_config.py -> CONFIGURACION de cada combo de 'Tabla Combos Dinamicos'
+   (G tipo de detonador, H operador, I valor limite, J prioridad, K mensaje, L descuento) para el
+   SaaS (#65). Reescribe la columna B y, despues de guardar, revisa C16 (#84).
 """

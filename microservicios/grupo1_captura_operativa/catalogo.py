@@ -132,7 +132,14 @@ class Catalogo:
         for fila in range(fila_encabezado + 1, ws.max_row + 1):
             nombre = _texto(valor(fila, "Nombre del Combo (Key)"))
             codigo = _texto(valor(fila, "codigo"))
-            if not nombre or not codigo:      # filas vacias o ideas sin codigo (ej. Promocion Musmani)
+            if not nombre and not codigo:
+                # || 5-oct-2026 (Decisiones Pendientes #89): la lista de combos TERMINA en la primera
+                # fila vacia. Antes se recorria toda la hoja y las filas de 'TablaComposicionCombos'
+                # (mas abajo, con un producto bajo la columna del nombre y un numero bajo la del
+                # codigo) se tomaban como combos: pedir "Baguette" por NOMBRE respondia "combo no
+                # ACTIVO". No se notaba porque el bot, el SaaS y las pruebas piden por CODIGO (P01).
+                break
+            if not nombre or not codigo:      # ideas sin codigo (no hay ninguna dentro de la lista hoy)
                 continue
             combos.append({
                 "origen": "Tabla Combos Dinamicos",

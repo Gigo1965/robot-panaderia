@@ -62,6 +62,7 @@ MENU = [
         ("NODO INTEGRAL", "grupo3.nodo_integral", False),
         ("Tabla cruce maestra", "grupo3.tabla_cruce_maestra", False),
         ("Tabla cruce maestra MP", "grupo3.tabla_cruce_mp", False),
+        ("Tabla combos dinámicos", "grupo3.combos", False),
     ]),
 ]
 _intentos = {}          # direccion -> [fallos, bloqueado_hasta]
@@ -311,7 +312,7 @@ def anular(id_pedido):
 # ----------------------------------------------------------------------------
 from .grupo1 import grupo1          # noqa: E402  Ventas despacho, descuento general, Ingreso de Inventario
 from .grupo2 import grupo2          # noqa: E402  Control de Inventario (existencia minima, #63) y Hornadas
-from .grupo3 import grupo3          # noqa: E402  NODO INTEGRAL (celdas manuales, #64) y tablas cruce maestras (lectura)
+from .grupo3 import grupo3          # noqa: E402  NODO INTEGRAL (#64), tablas cruce maestras (lectura) y combos (#65)
 
 app.register_blueprint(grupo1)
 app.register_blueprint(grupo2)

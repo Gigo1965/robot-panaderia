@@ -12,6 +12,11 @@ Un modulo por hoja, en el orden del Excel maestro:
   TABLA CRUCE MAESTRA     -> el mapa no marca ninguna celda manual: LECTURA.
   TABLA CRUCE MAESTRA MP  -> el mapa no marca ninguna celda manual: LECTURA.
   Tabla Combos Dinamicos  -> paquete 3b (Decisiones Pendientes #65), todavia sin construir.
+                             || 5-oct-2026: combos_config.py -> la CONFIGURACION de cada combo (G tipo de
+                             detonador, H operador, I valor limite, J prioridad, K mensaje y L descuento),
+                             un formulario por combo, solo administracion. La columna B la reescribe el
+                             robot y, despues de guardar, el robot revisa C16. La COMPOSICION del combo
+                             (que productos lleva, #85) todavia no se cambia desde aqui.
 
 Aqui NO hay reglas de negocio: la pantalla recoge lo digitado y se lo entrega a la funcion del
 robot (actualizar_dato_manual). Si el dato no se permite, lo rechaza el robot y la pantalla
@@ -30,6 +35,7 @@ from .seguridad import con_sesion, solo_administracion                     # noq
 from conexion_drive import ConflictoDeVersion, ErrorConexionExcel          # noqa: E402
 from conexion_drive.tablas import leer_tabla, obtener_tabla                # noqa: E402
 from microservicios.grupo3_integraciones import activacion_promocion as ap  # noqa: E402
+from microservicios.grupo3_integraciones import combos_config as cc        # noqa: E402
 from microservicios.grupo3_integraciones import nodo_manual as nm          # noqa: E402
 
 log = logging.getLogger("saas_demo")
@@ -96,7 +102,7 @@ def _libro_o_problema():
 
 def _avisar(error):
     """Explica en pantalla por que no se escribio."""
-    if isinstance(error, (nm.ValorInvalido, ap.ActivacionInvalida, LookupError, ValueError)):
+    if isinstance(error, (nm.ValorInvalido, cc.ValorInvalido, ap.ActivacionInvalida, LookupError, ValueError)):
         flash(f"El robot no lo permitió: {error}", "error")
     elif isinstance(error, (datos.Ocupado, datos.CopiaNoVerificada)):
         flash(str(error), "error")
@@ -190,3 +196,75 @@ def tabla_cruce_maestra():
 @con_sesion
 def tabla_cruce_mp():
     return _tabla_cruce("mp")
+
+
+# ============================================================================
+# Tabla Combos Dinamicos: configuracion de cada combo (#65)
+# ============================================================================
+def _criterio(combo):
+    """'Temperatura <= 30 °C' o 'Clima = Lluvia', como se lee en pantalla."""
+    if combo["tipo"] == cc.TEMPERATURA:
+        valor = f"{combo['valor']:g}" if _numero(combo["valor"]) is not None else str(combo["valor"])
+        return f"Temperatura {combo['operador']} {valor} °C"
+    if combo["tipo"] == cc.LLUVIA:
+        return f"Clima = {combo['valor']}"
+    return f"{combo['tipo']} {combo['operador']} {combo['valor']}".strip()
+
+
+def _valor_en_pantalla(valor):
+    if _numero(valor) is not None:
+        return f"{valor:g}"
+    return "" if valor is None else str(valor).strip()
+
+
+@grupo3.route("/combos")
+@con_sesion
+def combos():
+    libro, problema = _libro_o_problema()
+    if libro is None:
+        return render_template("problema.html", problema=problema), 503
+    try:
+        lista = cc.leer_combos(libro["wb"])
+        oferta = ap.leer_activacion(libro["wb"])
+        nodo = {f["descripcion"]: f["valor"] for f in nm.leer_nodo(libro["wb"])}
+    except (KeyError, cc.ValorInvalido, ap.ActivacionInvalida) as error:
+        return render_template("problema.html", problema=f"No se pudo leer Tabla Combos Dinamicos: {error}"), 503
+    for combo in lista:
+        combo["criterio"] = _criterio(combo)
+        combo["precio_texto"] = _colones(combo["precio"])
+        combo["temperatura"] = f"{combo['valor']:g}" if _numero(combo["valor"]) is not None else ""
+        combo["lluvia"] = combo["valor"] if combo["valor"] in cc.CLIMAS else ""
+    hoy = {"clima": _valor_en_pantalla(nodo.get("Clima Actual")),
+           "temperatura": _valor_en_pantalla(nodo.get("Temperatura clima")),
+           "musi": _valor_en_pantalla(nodo.get("DATA OFERTA MUSI"))}
+    return render_template("combos.html", libro=libro, combos=lista, oferta=oferta, hoy=hoy, cc=cc)
+
+
+@grupo3.route("/combos/guardar", methods=["POST"])
+@solo_administracion
+def guardar_combo():
+    def dato(nombre, largo):
+        return str(request.form.get(nombre) or "").strip()[:largo]
+
+    codigo, tipo = dato("codigo", 12), dato("tipo", 20)
+    # La pantalla trae los dos campos del valor limite; se entrega el que corresponde al detonador elegido.
+    valor = dato("lluvia", 20) if tipo.upper() == cc.LLUVIA else dato("temperatura", 12)
+    try:
+        resultado, segundos = datos.escribir(
+            f"SaaS combo {codigo} ({session['rol']})",
+            lambda: cc.actualizar_combo(codigo, tipo, dato("operador", 4), valor, dato("prioridad", 6),
+                                        dato("mensaje", 400), dato("descuento", 12),
+                                        origen=f"SaaS ({session['rol']})"))
+    except Exception as error:          # noqa: BLE001 (cada caso se explica en _avisar)
+        _avisar(error)
+        return redirect(url_for("grupo3.combos"))
+    titulo = f"{resultado['nombre']} ({resultado['codigo']})"
+    if resultado.get("estado") == "SIN_CAMBIO":
+        flash(f"{titulo}: la configuración ya era esa. No se escribió nada.", "aviso")
+        return redirect(url_for("grupo3.combos"))
+    cambios = "; ".join(f"{c['titulo']} {_valor_en_pantalla(c['antes'])} → {_valor_en_pantalla(c['despues'])} (celda {c['celda']})"
+                        for c in resultado["cambios"])
+    activacion = resultado.get("activacion") or {}
+    oferta = f" Oferta hoy pasó a {activacion['valor']}." if activacion.get("hubo_cambios") else ""
+    flash(f"{titulo}: {cambios}.{oferta} Guardado en el Excel en {segundos} s.", "ok")
+    return redirect(url_for("grupo3.combos"))

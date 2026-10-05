@@ -27,12 +27,16 @@ Que revisa:
      "Oferta hoy" (C16 'Activacion de Promocion', #84): la escribe el robot; la pantalla solo la muestra.
      || 4-oct-2026 (noche): se quito el boton del SaaS (decision del usuario); nadie la actualiza a mano.
   M) Tablas cruce maestras (Grupo 3): solo lectura para los dos usuarios, sin formularios.
+  N) Tabla combos dinamicos (Grupo 3, #65): la ven los dos usuarios; la configuracion de cada combo
+     (detonador, operador, valor limite, prioridad, mensaje y descuento) la cambia solo administracion;
+     el Excel recalcula el estado y el precio; evento con valor anterior y nuevo; el robot revisa C16.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
 Escribe 13 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca de 3 minutos.
 || 4-oct-2026: se agregaron J y K (Grupo 2), con 5 escrituras mas; antes tardaba cerca de 2 minutos.
 || 4-oct-2026 (noche): se agregaron L y M (Grupo 3a), con 4 escrituras mas: ahora son 17 y tarda cerca de 3.5 minutos.
+|| 5-oct-2026: se agrego N (combos, Grupo 3b), con 4 escrituras mas: ahora son 21 y tarda cerca de 4.5 minutos.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
@@ -64,6 +68,7 @@ from microservicios.grupo1_captura_operativa.catalogo import Catalogo          #
 from microservicios.grupo2_inventario import existencia_minima as em          # noqa: E402
 from microservicios.grupo2_inventario import hornadas as hr                   # noqa: E402
 from microservicios.grupo3_integraciones import activacion_promocion as ap    # noqa: E402
+from microservicios.grupo3_integraciones import combos_config as cc           # noqa: E402
 from microservicios.grupo3_integraciones import nodo_manual as nm             # noqa: E402
 
 errores = []
@@ -659,6 +664,88 @@ def main():
             revisar(pagina.status_code == 200 and all(n in texto for n in nombres) and all(c in texto for c in codigos),
                     f"{nombre_cliente} ve los {len(nombres)} productos de '{hoja}' con su codigo")
             revisar(b"data-escribe" not in pagina.data, f"'{hoja}' ({nombre_cliente}): sin formularios, es solo lectura")
+
+    # ------------------------------------------------------------------ N
+    paso("N) Tabla combos dinamicos: lectura para todos; configuracion solo administracion (#65)")
+
+    def leer_combos():
+        return {c["codigo"]: c for c in cc.leer_combos()}
+
+    def guardar_combo(cliente, ficha, combo, **cambios):
+        formulario = {"codigo": combo["codigo"], "tipo": combo["tipo"], "operador": combo["operador"],
+                      "temperatura": f"{combo['valor']:g}" if isinstance(combo["valor"], (int, float)) else "",
+                      "lluvia": combo["valor"] if combo["valor"] in cc.CLIMAS else "",
+                      "prioridad": str(combo["prioridad"]), "mensaje": combo["mensaje"],
+                      "descuento": f"{combo['descuento']:g}", "ficha": ficha}
+        formulario.update(cambios)
+        return cliente.post("/combos/guardar", data=formulario)
+
+    combos_inicio = leer_combos()
+    primero = next(iter(combos_inicio.values()))
+    pagina = despacho.get("/combos")
+    texto = html.unescape(pagina.get_data(as_text=True))
+    revisar(pagina.status_code == 200 and all(c["nombre"] in texto and c["codigo"] in texto and c["mensaje"] in texto
+                                              for c in combos_inicio.values()),
+            f"despacho ve los {len(combos_inicio)} combos con su codigo, estado, precio y mensaje")
+    revisar(b"data-escribe" not in pagina.data and b'name="codigo"' not in pagina.data,
+            "despacho no ve los formularios de configuracion")
+    revisar("el clima no se actualiza" in texto and str(leer_excel()["NODO INTEGRAL"]["C5"].value).strip() in texto,
+            "la pantalla muestra el clima de la hoja y avisa que en la copia de demostracion no se actualiza")
+    huella_antes = huella(COPIA_TEMPORAL)
+    respuesta = guardar_combo(despacho, ficha_despacho, primero, descuento="0")
+    revisar(respuesta.status_code == 403 and huella(COPIA_TEMPORAL) == huella_antes,
+            "despacho no puede cambiarlos: el servidor responde 403 y el Excel no cambia")
+    pagina = admin.get("/combos")
+    revisar(pagina.data.count(b'name="codigo"') == len(combos_inicio)
+            and all(f"Guardar {c['nombre']}".encode() in pagina.data for c in combos_inicio.values()),
+            f"administracion ve un formulario por combo ({len(combos_inicio)})")
+    for cambio in ({"tipo": "FERIADO"}, {"tipo": "DIA_PAGO"}, {"descuento": "30"}, {"mensaje": "=1+1"},
+                   {"tipo": "TEMPERATURA", "temperatura": "80"}, {"prioridad": "0"}, {"operador": "<>"},
+                   {"tipo": "LLUVIA", "lluvia": "Nublado"}, {"codigo": "Baguette"}):
+        guardar_combo(admin, ficha_admin, primero, **cambio)
+    pagina = admin.get("/combos")
+    revisar("El robot no lo permitió".encode() in pagina.data and huella(COPIA_TEMPORAL) == huella_antes,
+            "detonador FERIADO y DIA_PAGO, descuento 30, mensaje con '=', temperatura 80, prioridad 0, operador '<>', "
+            "clima 'Nublado' y un combo que no existe: rechazados, no se escribe nada")
+    descuento_nuevo = 5 if primero["descuento"] != 5 else 7.5
+    guardar_combo(admin, ficha_admin, primero, descuento=f"{descuento_nuevo:g}")
+    pagina = admin.get("/combos")
+    ahora = leer_combos()[primero["codigo"]]
+    revisar(ahora["descuento"] == descuento_nuevo and round(ahora["precio"], 2) != round(primero["precio"], 2),
+            f"{primero['nombre']}: descuento {primero['descuento']:g} % -> {descuento_nuevo:g} % (celda {primero['celdas']['descuento']}); "
+            f"el Excel recalculo el precio {primero['precio']:,.2f} -> {ahora['precio']:,.2f}")
+    revisar(b"Guardado en el Excel en" in pagina.data, "la pantalla muestra el aviso con el tiempo")
+    ws, tabla = obtener_tabla(leer_excel(), "RegistroEventos", "tblRegistroEventos")
+    evento = [e for e in leer_tabla(ws, tabla) if e.get("TIPO_EVENTO") == cc.TIPO_EVENTO][-1]
+    revisar(evento.get("ORIGEN") == "SaaS (administracion)" and evento.get("ID_ENTIDAD") == primero["codigo"]
+            and "->" in str(evento.get("DETALLE")), f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    huella_antes = huella(COPIA_TEMPORAL)
+    guardar_combo(admin, ficha_admin, ahora)
+    revisar(huella(COPIA_TEMPORAL) == huella_antes and "ya era esa".encode() in admin.get("/combos").data,
+            "la misma configuracion otra vez: SIN_CAMBIO, no se escribe nada")
+    clima_hoy = str(leer_excel()["NODO INTEGRAL"]["C5"].value or "").strip()
+    inactivo = next((c for c in leer_combos().values() if not c["activo"]), None)
+    if inactivo is None or clima_hoy not in cc.CLIMAS:
+        revisar(clima_hoy in cc.CLIMAS, f"'NODO INTEGRAL' C5 dice {clima_hoy!r} (se esperaba Lluvia o Despejado)")
+        print("       (no hay un combo INACTIVO en esta copia: no se prueba el detonador LLUVIA en la pantalla)")
+    else:
+        guardar_combo(admin, ficha_admin, inactivo, tipo="LLUVIA", lluvia=clima_hoy)
+        cambiado = leer_combos()[inactivo["codigo"]]
+        revisar(cambiado["activo"] and cambiado["tipo"] == "LLUVIA" and cambiado["valor"] == clima_hoy
+                and cambiado["clima"] == clima_hoy,
+                f"{inactivo['nombre']} con detonador LLUVIA = {clima_hoy} (el clima de hoy en la hoja): pasa a ACTIVO "
+                f"y el robot escribe {clima_hoy!r} en la columna B")
+        texto = html.unescape(despacho.get("/combos?actualizar=1").get_data(as_text=True))
+        revisar(f"Clima = {clima_hoy}" in texto, "despacho ve el detonador nuevo en la tabla")
+    for codigo, original in combos_inicio.items():
+        if any(leer_combos()[codigo][c] != original[c] for c in cc.CAMPOS):
+            guardar_combo(admin, ficha_admin, original)
+    combos_final = leer_combos()
+    revisar(all(combos_final[k][c] == combos_inicio[k][c] for k in combos_inicio for c in cc.CAMPOS)
+            and all(combos_final[k]["activo"] == combos_inicio[k]["activo"]
+                    and round(combos_final[k]["precio"], 2) == round(combos_inicio[k]["precio"], 2) for k in combos_inicio),
+            "se devolvio la configuracion: las celdas G a L, el estado y el precio de cada combo son los del inicio")
+    revisar(ap.leer_activacion()["al_dia"], "C16 'Activacion de Promocion' quedo al dia despues de los cambios")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")
