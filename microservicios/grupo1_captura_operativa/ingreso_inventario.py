@@ -325,7 +325,7 @@ def escribir_fila_ingreso(ws, tabla, fecha, factura, nombre, cantidad, es_produc
     return fila
 
 
-def registrar_ingresos(lineas, factura, proveedor=None, fecha=None):
+def registrar_ingresos(lineas, factura, proveedor=None, fecha=None, origen="Robot Python"):
     """Registra VARIAS lineas de un mismo documento (factura o lote) en un solo guardado.
 
     lineas:    [{'producto': 'Ha01', 'cantidad': 10}, {'producto': 'P01', 'cantidad': 500}]
@@ -338,6 +338,10 @@ def registrar_ingresos(lineas, factura, proveedor=None, fecha=None):
     se vende tal como se compra (V15, cafe Ca01), o una compra sin costo valido en
     la TCM (#32), no se escribe NINGUNA (la factura se registra completa o no se registra).
     El costo de cada compra se toma de la TCM en este momento y se congela.
+
+    || 4-oct-2026 (decision del usuario, opcion C): origen es un dato OPCIONAL que solo se
+    anota en la columna ORIGEN del evento (p. ej. "SaaS (administracion)"). Si no se envia,
+    queda "Robot Python" como antes (EVT-000043 de la copia DEMO decia "Robot Python").
     """
     if not lineas:
         raise ValueError("No hay lineas para registrar.")
@@ -389,7 +393,7 @@ def registrar_ingresos(lineas, factura, proveedor=None, fecha=None):
 
         registrar_evento(
             wb, modulo="Ingreso de Inventario", tipo_evento="INGRESO_INVENTARIO", entidad="TablaIngresos",
-            id_entidad=factura, accion="INSERT", estado="REGISTRADO",
+            id_entidad=factura, accion="INSERT", estado="REGISTRADO", origen=origen,
             detalle="; ".join(
                 f"{r['cantidad']} x {r['producto']} ({r['movimiento']}, fila {r['fila']}"
                 + (f", costo congelado {r['costo_unitario']:,.2f})" if r["costo_unitario"] is not None else ")")

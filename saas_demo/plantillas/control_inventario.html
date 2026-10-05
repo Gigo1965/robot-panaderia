@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block titulo %}Control de inventario{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Control de inventario</h1>
+  <p class="encabezado__resumen">Existencias de los {{ filas|length }} productos, tal como las calcula el Excel con sus fórmulas: compras más producción, menos ventas, combos y consumo en hornadas. Aquí nadie digita existencias; lo único que se digita es la existencia mínima de cada producto.</p>
+</div>
+
+{% if por_reabastecer %}
+<p class="aviso aviso--aviso">{{ por_reabastecer }} de {{ filas|length }} productos están por debajo de su existencia mínima (REABASTECER).</p>
+{% endif %}
+
+{% if es_admin %}
+<section class="captura">
+  <h2>Existencia mínima de un producto</h2>
+  <form method="post" action="{{ url_for('grupo2.existencia_minima') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--ancho">
+      <label for="producto">Producto</label>
+      <select id="producto" name="producto" required>
+        <option value="">Elige un producto</option>
+        {% for f in filas %}
+        <option value="{{ f.producto }}">{{ f.producto }} (mínimo {{ f.minimo|cantidad }}, hay {{ f.existencia|cantidad }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="minimo">Mínimo nuevo</label>
+      <input id="minimo" name="minimo" type="number" min="0" max="{{ maximo }}" step="0.01" inputmode="decimal" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar existencia mínima</button>
+  </form>
+  <p class="nota">Se acepta de 0 en adelante, con hasta 2 decimales (por ejemplo 0.5 de un saco). La cantidad va en la misma unidad en que se compra el producto: unidades, sacos o cajas. Se guarda en la hoja Control de Inventario, columna G, y el cambio queda en RegistroEventos con el valor anterior y el nuevo. El estado lo calcula el Excel.</p>
+</section>
+{% else %}
+<p class="nota">La existencia mínima la cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
+{% endif %}
+
+<h2 class="subtitulo">Existencias</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Producto</th>
+      <th scope="col" class="num">Compras</th>
+      <th scope="col" class="num">Producción</th>
+      <th scope="col" class="num">Ventas despacho</th>
+      <th scope="col" class="num">Ventas digitales</th>
+      <th scope="col" class="num">En combos</th>
+      <th scope="col" class="num">Consumo en hornadas</th>
+      <th scope="col" class="num">Existencia</th>
+      <th scope="col" class="num">Mínimo</th>
+      <th scope="col">Estado</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in filas %}
+    <tr>
+      <td data-titulo="Producto">{{ f.producto }}</td>
+      <td data-titulo="Compras" class="num">{{ f.entrada_compra|cantidad }}</td>
+      <td data-titulo="Producción" class="num">{{ f.entrada_produccion|cantidad }}</td>
+      <td data-titulo="Ventas despacho" class="num">{{ f.ventas_despacho|cantidad }}</td>
+      <td data-titulo="Ventas digitales" class="num">{{ f.ventas_digitales|cantidad }}</td>
+      <td data-titulo="En combos" class="num">{{ f.salidas_combos|cantidad }}</td>
+      <td data-titulo="Consumo en hornadas" class="num">{{ f.consumo_produccion|cantidad }}</td>
+      <td data-titulo="Existencia" class="num"><strong>{{ f.existencia|cantidad }}</strong></td>
+      <td data-titulo="Mínimo" class="num">{{ f.minimo|cantidad }}</td>
+      <td data-titulo="Estado">{% if f.estado == 'REABASTECER' %}<span class="sello sello--pendiente">Reabastecer</span>{% elif f.estado == 'OK' %}<span class="sello sello--entregado">OK</span>{% else %}{{ f.estado }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>Las columnas de compras, producción, ventas, combos y consumo son fórmulas del Excel que suman lo registrado en las otras hojas. La existencia es entradas menos salidas, y el estado dice Reabastecer cuando la existencia es menor que el mínimo.</p>
+  <p>El botón llama a la función <code>actualizar_existencia_minima</code> del robot, que escribe solo la celda del mínimo de ese producto. Si el dato no se permite, el robot lo rechaza y no escribe nada.</p>
+</details>
+{% endblock %}

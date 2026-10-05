@@ -16,15 +16,22 @@ Que revisa:
      de 0 % a 10 %, evento con valor anterior y nuevo.
   I) Ingreso de Inventario: solo administracion, costo congelado de la TCM, sugerencias de
      nombres, cafe Ca01 y produccion propia rechazados.
+  J) Control de inventario (Grupo 2, #63): lo ven los dos usuarios; la existencia minima
+     ('Control de Inventario' columna G) la cambia solo administracion, de 0 en adelante con
+     hasta 2 decimales; el estado lo recalcula el Excel; evento con valor anterior y nuevo.
+  K) Hornadas (Grupo 2): despacho registra y anula; sin materia prima no hay hornada (Regla #34);
+     el Excel suma la produccion y rebaja la materia prima; al anular todo vuelve a su valor.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
-Escribe 9 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca de 2 minutos.
+Escribe 13 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca de 3 minutos.
+|| 4-oct-2026: se agregaron J y K (Grupo 2), con 5 escrituras mas; antes tardaba cerca de 2 minutos.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
 """
 import hashlib
+import html
 import re
 import sys
 
@@ -47,6 +54,8 @@ from conexion_drive.tablas import leer_tabla, obtener_tabla      # noqa: E402
 from microservicios.grupo1_captura_operativa import descuento_general as dg   # noqa: E402
 from microservicios.grupo1_captura_operativa import pedidos_digitales as pd   # noqa: E402
 from microservicios.grupo1_captura_operativa.catalogo import Catalogo          # noqa: E402
+from microservicios.grupo2_inventario import existencia_minima as em          # noqa: E402
+from microservicios.grupo2_inventario import hornadas as hr                   # noqa: E402
 
 errores = []
 
@@ -335,6 +344,9 @@ def main():
     anuladas = [f for f in leer_tabla(ws_v, tabla_v) if f["_fila"] in (filas_v[0]["_fila"], filas_v[1]["_fila"])]
     revisar(all(f.get("Estado de orden") == "ORDEN ANULADA" for f in anuladas),
             "anular: solo cambia el estado a ORDEN ANULADA, producto por producto (las ventas no se borran)")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == "ANULACION" and evento.get("ORIGEN") == "SaaS (despacho)",
+            f"evento {evento.get('ID_EVENTO')}: ANULACION, origen SaaS (despacho) (antes decia Robot Python)")
     revisar(inventario("Baguette", "Existencia Actual") == existencia_antes and inventario(leche, "Existencia Actual") == leche_antes,
             "el inventario volvio a su valor")
     huella_antes = huella(COPIA_TEMPORAL)
@@ -409,11 +421,137 @@ def main():
             f"costo congelado de la TCM ({costo_harina:,.2f}); nadie digito el precio (Regla #33)")
     revisar(ultimo_evento().get("TIPO_EVENTO") == "INGRESO_INVENTARIO" and ultimo_evento().get("ID_ENTIDAD") == "F-SAAS-01",
             "evento INGRESO_INVENTARIO de la factura")
+    revisar(ultimo_evento().get("ORIGEN") == "SaaS (administracion)",
+            "el evento dice origen SaaS (administracion) (antes decia Robot Python)")
     revisar(inventario(harina, "Entrada Compra") == round(entrada_antes + 2, 2),
             f"el Excel sumo la compra al inventario de harina: {entrada_antes:g} -> {entrada_antes + 2:g}")
     huella_antes = huella(COPIA_TEMPORAL)
     factura([("Ha01", "2"), ("L01", "3")])
     revisar(huella(COPIA_TEMPORAL) == huella_antes, "la misma factura otra vez: duplicada, no se escribe nada")
+
+    # ------------------------------------------------------------------ J
+    paso("J) Control de inventario: lectura para todos; existencia minima solo administracion (#63)")
+    filas_inv = em.leer_existencias()
+    pagina = despacho.get("/control-inventario")
+    texto = html.unescape(pagina.get_data(as_text=True))
+    revisar(pagina.status_code == 200 and all(f["producto"] in texto for f in filas_inv),
+            f"despacho ve los {len(filas_inv)} productos de 'Control de Inventario'")
+    revisar(b"Guardar existencia" not in pagina.data, "despacho no ve el formulario de la existencia minima")
+    elegido = next((f for f in filas_inv if f["estado"] == "REABASTECER" and f["existencia"] >= 0.1), filas_inv[0])
+
+    def minimo(cliente, ficha, producto, valor):
+        return cliente.post("/control-inventario/minimo", data={"producto": producto, "minimo": valor, "ficha": ficha})
+
+    huella_antes = huella(COPIA_TEMPORAL)
+    respuesta = minimo(despacho, ficha_despacho, elegido["producto"], "1")
+    revisar(respuesta.status_code == 403 and huella(COPIA_TEMPORAL) == huella_antes,
+            "despacho no puede cambiarla: el servidor responde 403 y el Excel no cambia")
+    revisar(b"Guardar existencia" in admin.get("/control-inventario").data, "administracion si ve el formulario")
+    for producto, valor in ((elegido["producto"], "-1"), (elegido["producto"], "abc"), ("PRODUCTO QUE NO EXISTE", "5")):
+        minimo(admin, ficha_admin, producto, valor)
+    pagina = admin.get("/control-inventario")
+    revisar("El robot no lo permitió".encode() in pagina.data and huella(COPIA_TEMPORAL) == huella_antes,
+            "-1, 'abc' y un producto que no esta en la hoja: rechazados, no se escribe nada")
+    nuevo_minimo = max(round(elegido["existencia"] / 2, 2), 0.01)
+    minimo(admin, ficha_admin, elegido["producto"], f"{nuevo_minimo:g}".replace(".", ","))
+    fila_inv = next(f for f in em.leer_existencias() if f["producto"] == elegido["producto"])
+    estado_esperado = "REABASTECER" if round(elegido["existencia"], 2) < nuevo_minimo else "OK"
+    revisar(fila_inv["minimo"] == nuevo_minimo, f"{elegido['producto']}: minimo {elegido['minimo']:g} -> {nuevo_minimo:g} (con decimales)")
+    revisar(fila_inv["estado"] == estado_esperado and round(fila_inv["existencia"], 2) == round(elegido["existencia"], 2),
+            f"el Excel recalculo el estado ({elegido['estado']} -> {fila_inv['estado']}); la existencia no cambio")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == em.TIPO_EVENTO and evento.get("ORIGEN") == "SaaS (administracion)"
+            and "->" in str(evento.get("DETALLE")), f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    revisar(b"Guardado en el Excel en" in admin.get("/control-inventario").data, "la pantalla muestra el aviso con el tiempo")
+    huella_antes = huella(COPIA_TEMPORAL)
+    minimo(admin, ficha_admin, elegido["producto"], f"{nuevo_minimo:g}")
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "el mismo valor otra vez: SIN_CAMBIO, no se escribe nada")
+    minimo(admin, ficha_admin, elegido["producto"], f"{elegido['minimo']:g}")
+    revisar([(f["producto"], f["minimo"], f["estado"]) for f in em.leer_existencias()]
+            == [(f["producto"], f["minimo"], f["estado"]) for f in filas_inv], "los minimos y los estados volvieron a su valor")
+
+    # ------------------------------------------------------------------ K
+    paso("K) Hornadas: despacho registra y anula; sin materia prima no hay hornada (Regla #34)")
+    pagina = despacho.get("/hornadas")
+    revisar(pagina.status_code == 200 and b'value="P01"' in pagina.data and b'value="Pa01"' in pagina.data,
+            "la pantalla ofrece los dos productos de produccion propia (P01 y Pa01)")
+
+    def hornear(producto, cantidad, unico=None):
+        unico = unico or unico_de(despacho.get("/hornadas"))
+        return despacho.post("/hornadas/registrar", data={"producto": producto, "cantidad": cantidad, "unico": unico,
+                                                         "ficha": ficha_despacho})
+
+    def consumo(materia):
+        """'Consumo en Produccion' de una materia prima, sin redondear (lo calcula el Excel)."""
+        ws_c, tabla_c = obtener_tabla(leer_excel(), "Control de Inventario", "TablaControlInventario")
+        fila = next(f for f in leer_tabla(ws_c, tabla_c) if str(f.get("Producto Maestro")).strip() == materia)
+        return float(fila.get("Consumo en Producción") or 0)
+
+    huella_antes = huella(COPIA_TEMPORAL)
+    hornear("P01", "9999")
+    pagina = despacho.get("/hornadas")
+    revisar(huella(COPIA_TEMPORAL) == huella_antes and b"No alcanza la materia prima" in pagina.data,
+            "9999 Baguette: el robot la rechaza completa, dice que falta y no escribe nada")
+    hornear("L01", "10"), hornear("P01", "0"), hornear("P01", "2.5")
+    despacho.get("/hornadas")
+    revisar(huella(COPIA_TEMPORAL) == huella_antes,
+            "producto que no es de produccion propia, cantidad 0 y cantidad con decimales: no se escribe nada")
+
+    # Primero se compra y despues se hornea: 1 paquete de cada materia prima de la receta de Baguette.
+    ws_r, tabla_r = obtener_tabla(leer_excel(), hr.HOJA_CONSUMO, hr.TABLA_RECETA)
+    receta = [l for l in leer_tabla(ws_r, tabla_r) if str(l.get("Codigo")).strip() == "P01"]
+    materias = [str(l["Materia prima"]).strip() for l in receta]
+    respuesta = factura([(m, "1") for m in materias], codigo="F-SAAS-02")
+    revisar(respuesta.status_code == 302, f"compra F-SAAS-02: 1 paquete de cada materia prima de la receta ({len(materias)} lineas)")
+
+    unidades = 10
+    produccion_antes = inventario("Baguette", "Entrada Producción")
+    existencia_antes = inventario("Baguette", "Existencia Actual")
+    consumo_antes = {m: consumo(m) for m in materias}
+    unico = unico_de(despacho.get("/hornadas"))
+    respuesta = hornear("P01", str(unidades), unico)
+    revisar(respuesta.status_code == 302, f"hornada de {unidades} Baguette: el boton responde")
+    hist = ultima_fila("Historico Diario", "HistoricoHorneadas", "Fecha")
+    revisar(hist.get("Producto") == "Baguette" and hist.get("Cantidad producida") == unidades,
+            f"'Historico Diario' fila {hist['_fila']}: {unidades} x Baguette")
+    revisar(round(hist.get("Venta total") - hist.get("Costo total producción"), 2) == round(hist.get("Utilidad bruta"), 2)
+            and round(unidades * hist.get("Precio unitario"), 2) == round(hist.get("Venta total"), 2),
+            f"los 9 valores quedaron calculados (costo unitario {hist.get('Costo unitario'):,.2f}, "
+            f"precio de referencia {hist.get('Precio unitario'):,.2f})")
+    revisar(inventario("Baguette", "Entrada Producción") == round(produccion_antes + unidades, 2)
+            and inventario("Baguette", "Existencia Actual") == round(existencia_antes + unidades, 2),
+            f"el Excel sumo la produccion: existencia de Baguette {existencia_antes:g} -> {existencia_antes + unidades:g}")
+    esperado_mp = {str(l["Materia prima"]).strip(): unidades * l["Cantidad por unidad"] / l["Contenido por paquete"] for l in receta}
+    revisar(all(abs(consumo(m) - consumo_antes[m] - esperado_mp[m]) < 0.0002 for m in materias),
+            "el Excel rebajo la materia prima de la receta: "
+            + ", ".join(f"{m[:10].strip()} {esperado_mp[m]:.3f}" for m in materias) + " paquetes")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == "HORNADA" and evento.get("ORIGEN") == "SaaS (despacho)",
+            f"evento {evento.get('ID_EVENTO')}: HORNADA, origen SaaS (despacho), lote {evento.get('ID_ENTIDAD')}")
+    pagina = despacho.get("/hornadas")
+    revisar(b"Hornada registrada" in pagina.data and b"Guardado en el Excel en" in pagina.data,
+            "la pantalla muestra el aviso con el lote, el costo y el tiempo")
+    huella_antes = huella(COPIA_TEMPORAL)
+    hornear("P01", str(unidades), unico)
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "el mismo formulario enviado dos veces no registra dos hornadas")
+
+    despacho.post("/hornadas/anular", data={"producto": "P01", "ficha": ficha_despacho})
+    hist = ultima_fila("Historico Diario", "HistoricoHorneadas", "Fecha")
+    revisar(hist.get("Producto") == "Baguette" and hist.get("Cantidad producida") == -unidades,
+            f"anular: fila {hist['_fila']} de correccion con cantidad negativa ({hist.get('Cantidad producida')}); la original no se borra")
+    revisar(inventario("Baguette", "Existencia Actual") == existencia_antes
+            and all(abs(consumo(m) - consumo_antes[m]) < 0.0002 for m in materias),
+            "el inventario de Baguette y la materia prima volvieron a su valor")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == "ANULACION_HORNADA" and evento.get("ORIGEN") == "SaaS (despacho)",
+            f"evento {evento.get('ID_EVENTO')}: ANULACION_HORNADA, origen SaaS (despacho)")
+    huella_antes = huella(COPIA_TEMPORAL)
+    despacho.post("/hornadas/anular", data={"producto": "P01", "ficha": ficha_despacho})
+    revisar(huella(COPIA_TEMPORAL) == huella_antes and "ya estaba anulada".encode() in despacho.get("/hornadas").data,
+            "anular dos veces: ya estaba anulada, no se escribe nada")
+    respuesta = despacho.post("/hornadas/anular", data={"producto": "L01", "ficha": ficha_despacho})
+    revisar(respuesta.status_code == 404 and huella(COPIA_TEMPORAL) == huella_antes,
+            "anular un producto que no es de produccion propia: 404, no se escribe nada")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")

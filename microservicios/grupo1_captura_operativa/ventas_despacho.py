@@ -13,6 +13,11 @@ Sigue el 'Diseño del robot' de Ventas despacho del libro de mapas V5:
        Estado de orden                          -> 'ORDEN CORRECTA'
   5. Anulacion: unica excepcion al "solo INSERT"; cambia SOLO 'Estado de orden'.
 Cada accion queda anotada en la hoja RegistroEventos.
+
+|| 4-oct-2026 (decision del usuario, opcion C): anular_venta_despacho recibe un dato
+OPCIONAL al final, origen, que solo se anota en la columna ORIGEN del evento (p. ej.
+"SaaS (despacho)"). Si no se envia, queda "Robot Python" como antes. Evidencia: en la
+prueba del SaaS en Render el evento EVT-000041 de la copia DEMO decia "Robot Python".
 """
 from datetime import datetime, time
 
@@ -121,11 +126,12 @@ def registrar_venta_despacho(producto, cantidad, momento=None):
     return editar_excel(_editar, descripcion=f"Venta despacho {cantidad} x {producto}")
 
 
-def anular_venta_despacho(producto, cantidad, momento):
+def anular_venta_despacho(producto, cantidad, momento, origen="Robot Python"):
     """Cambia a 'ORDEN ANULADA' la venta que coincida con Fecha+Hora+Producto+Cantidad.
 
     Solo toca la columna 'Estado de orden'. Nunca cambia fecha, producto,
     cantidad ni precio de una venta ya escrita.
+    origen (opcional): quien la anulo; solo se anota en el evento (4-oct-2026).
     """
     cantidad = _validar_cantidad(cantidad)
     fecha, hora = _separar_fecha_hora(momento)
@@ -144,6 +150,7 @@ def anular_venta_despacho(producto, cantidad, momento):
         registrar_evento(
             wb, modulo="Ventas despacho", tipo_evento="ANULACION", entidad="Tabla6",
             id_entidad=f"fila {venta['_fila']}", accion="UPDATE Estado de orden", estado=ORDEN_ANULADA,
+            origen=origen,
             detalle=f"{cantidad} x {nombre} del {fecha.date()} {hora}",
         )
         return {"hubo_cambios": True, "estado": "ANULADA", "fila": venta["_fila"]}

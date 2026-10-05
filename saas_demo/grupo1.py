@@ -222,7 +222,8 @@ def anular_venta():
     try:
         resultado, segundos = datos.escribir(
             f"SaaS anular venta despacho fila {venta['fila']} ({session['rol']})",
-            lambda: vd.anular_venta_despacho(venta["producto"], cantidad, venta["momento"]))
+            lambda: vd.anular_venta_despacho(venta["producto"], cantidad, venta["momento"],
+                                             origen=f"SaaS ({session['rol']})"))
     except Exception as error:          # noqa: BLE001
         _avisar(error)
         return redirect(url_for("grupo1.ventas_despacho"))
@@ -364,7 +365,8 @@ def ingreso_inventario():
     try:
         resultado, segundos = datos.escribir(
             f"SaaS ingreso de inventario {valores['factura']} ({session['rol']})",
-            lambda: ii.registrar_ingresos(lineas, valores["factura"], valores["proveedor"], fecha))
+            lambda: ii.registrar_ingresos(lineas, valores["factura"], valores["proveedor"], fecha,
+                                          origen=f"SaaS ({session['rol']})"))
     except Exception as error:          # noqa: BLE001
         _avisar(error)
         return _pantalla_ingreso(libro, valores, 400)

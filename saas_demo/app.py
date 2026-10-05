@@ -54,6 +54,10 @@ MENU = [
         ("Descuento de día de pago", "grupo1.descuento_general", True),
         ("Ingreso de inventario", "grupo1.ingreso_inventario", True),
     ]),
+    ("2 Inventario", [
+        ("Control de inventario", "grupo2.control_inventario", False),
+        ("Hornadas", "grupo2.hornadas", False),
+    ]),
 ]
 _intentos = {}          # direccion -> [fallos, bloqueado_hasta]
 
@@ -301,8 +305,10 @@ def anular(id_pedido):
 # Modulos por grupo (un archivo por grupo de microservicios, en el orden del Excel)
 # ----------------------------------------------------------------------------
 from .grupo1 import grupo1          # noqa: E402  Ventas despacho, descuento general, Ingreso de Inventario
+from .grupo2 import grupo2          # noqa: E402  Control de Inventario (existencia minima, #63) y Hornadas
 
 app.register_blueprint(grupo1)
+app.register_blueprint(grupo2)
 
 
 # ----------------------------------------------------------------------------

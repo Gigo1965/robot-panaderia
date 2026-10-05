@@ -32,6 +32,11 @@ paquetes). Si alguna no alcanza para la cantidad completa, rechaza la hornada en
 (MateriaPrimaInsuficiente) y dice que falta y cuanto. No se escribe nada. Anular una
 hornada NUNCA se bloquea (devuelve materia prima). Primero se registra la compra
 (ingreso_inventario.py) y despues se hornea, como en una panaderia real (Regla #10).
+
+|| 4-oct-2026 (decision del usuario, opcion C; SaaS Grupo 2): registrar_hornada y
+anular_hornada reciben un dato OPCIONAL al final, origen, que solo se anota en la columna
+ORIGEN del evento (p. ej. "SaaS (despacho)"). Si no se envia, queda "Robot Python" como
+antes. No cambia ninguna regla ni ningun calculo.
 """
 from datetime import datetime, time
 
@@ -200,8 +205,11 @@ def _fila_historico(fecha, hora, nombre, cantidad, costo, precio):
 # ----------------------------------------------------------------------------
 # Funciones publicas
 # ----------------------------------------------------------------------------
-def registrar_hornada(producto, cantidad, momento=None):
-    """Registra una hornada. producto: 'P01'/'Baguette' o 'Pa01'/'CupCake'."""
+def registrar_hornada(producto, cantidad, momento=None, origen="Robot Python"):
+    """Registra una hornada. producto: 'P01'/'Baguette' o 'Pa01'/'CupCake'.
+
+    origen (opcional): quien la registro; solo se anota en el evento (4-oct-2026).
+    """
     if isinstance(cantidad, bool) or not isinstance(cantidad, int) or cantidad <= 0:
         raise HornadaInvalida(f"La cantidad debe ser un entero mayor que 0 (llego {cantidad!r}). "
                               "Para anular una hornada use anular_hornada().")
@@ -247,7 +255,8 @@ def registrar_hornada(producto, cantidad, momento=None):
         filas_c = _escribir_consumo(wb, wb_calculado, fecha, lote, codigo, nombre_inv, cantidad)
 
         registrar_evento(wb, modulo="Hornadas", tipo_evento="HORNADA", entidad=cfg["hoja"], id_entidad=lote,
-                         accion="INSERT", estado="REGISTRADA", valor_referencia=valores["Venta total"],
+                         accion="INSERT", estado="REGISTRADA", origen=origen,
+                         valor_referencia=valores["Venta total"],
                          detalle=f"{cantidad} x {nombre_hist} a costo {costo} | Historico fila {fila_h} | "
                                  f"Ingreso fila {fila_i} | Consumo filas {filas_c}")
         return {"hubo_cambios": True, "estado": "REGISTRADA", "lote": lote, "producto": nombre_hist,
@@ -258,8 +267,11 @@ def registrar_hornada(producto, cantidad, momento=None):
     return editar_excel(_editar, descripcion=f"Hornada {cantidad} x {codigo}")
 
 
-def anular_hornada(producto):
-    """Anula la hornada que esta cargada ahora en la hoja de costo (G2 = 0 + correcciones negativas)."""
+def anular_hornada(producto, origen="Robot Python"):
+    """Anula la hornada que esta cargada ahora en la hoja de costo (G2 = 0 + correcciones negativas).
+
+    origen (opcional): quien la anulo; solo se anota en el evento (4-oct-2026).
+    """
     codigo = _codigo(producto)
     cfg = HOJAS_COSTO[codigo]
 
@@ -292,7 +304,7 @@ def anular_hornada(producto):
         filas_c = _revertir_consumo(wb, fecha, _lote(fecha, hora, codigo), lote)
 
         registrar_evento(wb, modulo="Hornadas", tipo_evento="ANULACION_HORNADA", entidad=cfg["hoja"],
-                         id_entidad=lote, accion="G2=0 + correccion negativa", estado="ANULADA",
+                         id_entidad=lote, accion="G2=0 + correccion negativa", estado="ANULADA", origen=origen,
                          valor_referencia=correccion["Venta total"],
                          detalle=f"-{cantidad} x {nombre_hist} | Historico fila {fila_h} | Ingreso fila {fila_i} | "
                                  f"Consumo filas {filas_c}")

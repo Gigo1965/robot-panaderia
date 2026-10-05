@@ -24,7 +24,7 @@
     </dl>
 
     <table class="tiquete__lineas">
-      <thead><tr><th scope="col" class="num">Cant.</th><th scope="col">Producto</th><th scope="col" class="num">Subtotal</th></tr></thead>
+      <thead><tr><th scope="col" class="num">Cant.</th><th scope="col">Producto</th><th scope="col" class="num">{% if p.descuento %}Importe con descuento{% else %}Importe{% endif %}</th></tr></thead>
       <tbody>
         {% for l in p.lineas %}
         <tr><td class="num">{{ l.cantidad }}</td><td>{{ l.producto }}</td><td class="num">{{ l.subtotal|colones }}</td></tr>
@@ -35,7 +35,7 @@
     </table>
 
     <dl class="tiquete__totales">
-      <div><dt>Subtotal</dt><dd>{{ p.subtotal|colones }}</dd></div>
+      <div><dt>{% if p.descuento %}Subtotal sin descuento{% else %}Subtotal{% endif %}</dt><dd>{{ p.subtotal|colones }}</dd></div>
       {% if p.descuento %}<div><dt>Descuento</dt><dd>-{{ p.descuento|colones }}</dd></div>{% endif %}
       <div><dt>Envío</dt><dd>{% if p.envio %}{{ p.envio|colones }}{% else %}Retiro en la panadería{% endif %}</dd></div>
       <div class="tiquete__total"><dt>Total</dt><dd>{{ p.total|colones }}</dd></div>

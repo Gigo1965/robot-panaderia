@@ -8,4 +8,8 @@ Se corre SIEMPRE desde la carpeta ROBOT PANADERO como paquete:
     py -m saas_demo.ensayo              (en la PC, copia temporal; no toca Drive)
     py -m saas_demo.probar_saas_demo    (prueba automatica, copia temporal)
 En Render es un servicio aparte del bot (ver app.py).
+
+|| 4-oct-2026: modulos por grupo, en el orden del Excel maestro (Regla #39):
+    grupo1.py  Ventas despacho, descuento de dia de pago e Ingreso de inventario
+    grupo2.py  Control de inventario (existencia minima, #63) y Hornadas
 """

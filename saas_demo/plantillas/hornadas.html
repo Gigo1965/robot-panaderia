@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block titulo %}Hornadas{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Hornadas</h1>
+  <p class="encabezado__resumen">Registro de la producción propia. Tú pones el producto y la cantidad horneada; el robot calcula el costo de esa hornada con la receta, la anota en el histórico, suma la producción al inventario y rebaja la materia prima. Si la materia prima no alcanza, la hornada se rechaza completa.</p>
+</div>
+
+<section class="captura">
+  <h2>Registrar una hornada</h2>
+  <form method="post" action="{{ url_for('grupo2.registrar_hornada') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="unico" value="{{ unico }}">
+    <div class="campo campo--ancho">
+      <label for="producto">Producto</label>
+      <select id="producto" name="producto" required>
+        <option value="">Elige un producto</option>
+        {% for p in productos %}
+        <option value="{{ p.codigo }}">{{ p.nombre }} ({{ p.codigo }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="cantidad">Cantidad horneada</label>
+      <input id="cantidad" name="cantidad" type="number" min="1" max="{{ maximo }}" step="1" inputmode="numeric" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Registrar hornada</button>
+  </form>
+  <p class="nota">La fecha y la hora las pone el robot al guardar. Primero se registra la compra de la materia prima (Ingreso de inventario) y después se hornea.</p>
+</section>
+
+<h2 class="subtitulo">Última hornada de cada producto</h2>
+<p class="nota">Solo se puede anular la última hornada registrada de cada producto, que es la que está cargada en su hoja de costo. Al anular no se borra nada: se agrega una corrección en negativo y la materia prima vuelve al inventario.</p>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Producto</th>
+      <th scope="col">Fecha</th>
+      <th scope="col" class="num">Cantidad</th>
+      <th scope="col">Estado</th>
+      <th scope="col"><span class="oculto">Acciones</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in productos %}
+    <tr class="{% if p.anulada %}comanda--anulado{% endif %}">
+      <td data-titulo="Producto">{{ p.nombre }}</td>
+      {% if p.hay_cargada %}
+      <td data-titulo="Fecha">{{ p.fecha|fecha }}<span class="comanda__hora">{{ p.hora|hora }}</span></td>
+      <td data-titulo="Cantidad" class="num">{{ p.cantidad|cantidad }}</td>
+      <td data-titulo="Estado">{% if p.anulada %}<span class="sello sello--anulado">Anulada</span>{% else %}<span class="sello sello--entregado">Registrada</span>{% endif %}</td>
+      <td class="comanda__acciones">
+        {% if not p.anulada %}
+        <form method="post" action="{{ url_for('grupo2.anular_hornada') }}" data-escribe
+              data-confirmar="¿Anular la hornada de {{ p.cantidad|cantidad }} x {{ p.nombre }} del {{ p.fecha|fecha }}, {{ p.hora|hora }}? No se borra: se agrega una corrección en negativo.">
+          <input type="hidden" name="ficha" value="{{ ficha }}">
+          <input type="hidden" name="producto" value="{{ p.codigo }}">
+          <button class="boton boton--secundario" type="submit">Anular</button>
+        </form>
+        {% endif %}
+      </td>
+      {% else %}
+      <td colspan="4">No hay una hornada cargada en la hoja {{ p.hoja }}.</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2 class="subtitulo">Histórico de hornadas</h2>
+{% if not hornadas %}
+<p class="vacio">Todavía no hay hornadas en el Excel.</p>
+{% else %}
+<p class="nota">Las {{ hornadas|length }} filas más recientes de {{ total_hornadas }}. Una fila con cantidad negativa es la corrección de una hornada anulada.</p>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fecha</th>
+      <th scope="col">Producto</th>
+      <th scope="col" class="num">Cantidad</th>
+      <th scope="col" class="num">Costo unitario</th>
+      <th scope="col" class="num">Precio unitario</th>
+      <th scope="col" class="num">Venta total</th>
+      <th scope="col" class="num">Costo total</th>
+      <th scope="col" class="num">Utilidad bruta</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for h in hornadas %}
+    <tr class="{% if h.correccion %}comanda--anulado{% endif %}">
+      <td data-titulo="Fecha">{{ h.fecha|fecha }}<span class="comanda__hora">{{ h.hora|hora }}</span></td>
+      <td data-titulo="Producto">{{ h.producto }}{% if h.correccion %} <span class="sello sello--anulado">Corrección</span>{% endif %}</td>
+      <td data-titulo="Cantidad" class="num">{{ h.cantidad|cantidad }}</td>
+      <td data-titulo="Costo unitario" class="num">{{ h.costo|colones }}</td>
+      <td data-titulo="Precio unitario" class="num">{{ h.precio|colones }}</td>
+      <td data-titulo="Venta total" class="num">{{ h.venta|colones }}</td>
+      <td data-titulo="Costo total" class="num">{{ h.costo_total|colones }}</td>
+      <td data-titulo="Utilidad bruta" class="num">{{ h.utilidad|colones }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>Cada botón llama a la función de Python del robot (<code>registrar_hornada</code> y <code>anular_hornada</code>). Un solo registro escribe en cuatro hojas: la hoja de costo del producto, Historico Diario, Ingreso de Inventario y Consumo de Materia Prima. Las rebajas del inventario las hace el Excel con sus fórmulas.</p>
+  <p>Antes de escribir, el robot revisa toda la receta contra Control de Inventario, incluidos los empaques. Si algo no alcanza, rechaza la hornada y dice qué falta.</p>
+  <p>Cada cambio queda anotado en la hoja RegistroEventos del Excel, con el origen «SaaS ({{ rol }})».</p>
+</details>
+{% endblock %}
