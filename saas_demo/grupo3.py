@@ -3,8 +3,10 @@
 Un modulo por hoja, en el orden del Excel maestro:
   NODO INTEGRAL           -> nodo_manual.py (celdas manuales C3, C4, C8 y C22, Decisiones Pendientes #64).
                              activacion_promocion.py (C16 'Activacion de Promocion', #84): la escribe el
-                             ROBOT; la pantalla muestra "Oferta hoy: ON / OFF" y, como la tarea diaria no
-                             corre sobre la copia de demostracion, administracion la actualiza con un boton.
+                             ROBOT; la pantalla solo muestra "Oferta hoy: ON / OFF" (lectura).
+                             || 4-oct-2026 (noche): el usuario quito el boton "Actualizar indicador de oferta":
+                             C16 es una celda bloqueada segun el mapa y nadie la maneja a mano. La escribe el
+                             robot (tarea diaria en el maestro; al guardar un combo en la copia, paquete 3b).
                              Las demas filas las escribe el robot por horario o son formulas (Regla #4):
                              se muestran como LECTURA. C14 y C15 quedan solo lectura (Regla #8, #80).
   TABLA CRUCE MAESTRA     -> el mapa no marca ninguna celda manual: LECTURA.
@@ -124,26 +126,6 @@ def nodo_integral():
         fila["texto"] = _texto_del_valor(fila)
     manuales = [dict(f, definicion=nm.CAMPOS[f["campo"]], boton=BOTON[f["campo"]]) for f in filas if f["clase"] == "manual"]
     return render_template("nodo_integral.html", libro=libro, filas=filas, manuales=manuales, oferta=oferta)
-
-
-@grupo3.route("/nodo-integral/oferta", methods=["POST"])
-@solo_administracion
-def actualizar_oferta():
-    """Boton 'Actualizar indicador de oferta': el robot decide ON / OFF y escribe C16 (en el maestro lo hace la tarea diaria)."""
-    try:
-        resultado, segundos = datos.escribir(
-            f"SaaS activacion de promocion ({session['rol']})",
-            lambda: ap.actualizar_activacion_promocion(origen=f"SaaS ({session['rol']})"))
-    except Exception as error:          # noqa: BLE001 (cada caso se explica en _avisar)
-        _avisar(error)
-        return redirect(url_for("grupo3.nodo_integral"))
-    if resultado.get("estado") == "SIN_CAMBIO":
-        flash(f"El indicador de oferta ya estaba al día ({resultado['valor']}). No se escribió nada.", "aviso")
-    else:
-        antes = "" if resultado["antes"] is None else str(resultado["antes"]).strip()
-        flash(f"Activación de Promoción: {antes} → {resultado['valor']} (celda {resultado['celda']}). "
-              f"Guardado en el Excel en {segundos} s.", "ok")
-    return redirect(url_for("grupo3.nodo_integral"))
 
 
 @grupo3.route("/nodo-integral/guardar", methods=["POST"])

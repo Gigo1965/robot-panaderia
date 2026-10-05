@@ -10,5 +10,5 @@
    (Decisiones Pendientes #64 y #80).
    Nuevo: activacion_promocion.py -> el robot escribe 'Activacion de Promocion' (C16): ON si hay
    combos activos o descuento general de dia de pago / feriado (#84). La tarea diaria la llama
-   al final de nodo_integral.py; en la copia de demostracion, un boton del SaaS.
+   al final de nodo_integral.py. || El boton del SaaS se quito (decision del usuario): la escribe solo el robot.
 """

@@ -11,6 +11,9 @@ Decisiones del usuario (4-oct-2026):
   * El SaaS la muestra solo en la pantalla NODO INTEGRAL.
   * En la copia de demostracion la tarea diaria no corre: la administracion la actualiza con
     un boton del SaaS que llama a ESTA misma funcion.
+    || 4-oct-2026 (noche): el usuario QUITO ese boton. C16 es una celda bloqueada segun el mapa:
+    la escribe solo el robot, nunca una persona. En la copia de demostracion el robot la
+    revisara al guardar la configuracion de un combo (paquete 3b, Decisiones Pendientes #65).
 
 Como decide: con el mismo catalogo que usan el bot y el despacho (catalogo.py), que ya aplica
 la Regla #8: en feriado o dia de pago hay descuento general y NO hay combos, aunque la columna
@@ -20,7 +23,7 @@ Por eso C16 no copia a C20: pregunta primero por el descuento general.
 Cuando corre:
   * En el maestro: al final de la tarea diaria de NODO INTEGRAL (nodo_integral.py), DESPUES de
     que el clima y el calendario quedaron guardados y el Excel recalculo los combos.
-  * En la copia de demostracion: con el boton de la pantalla NODO INTEGRAL (solo administracion).
+  * En la copia de demostracion: al guardar la configuracion de un combo (paquete 3b). Ya no hay boton.
 
 Reglas del proyecto que se respetan:
   * Lee el Excel ya recalculado; escribe SOLO la celda C16 (la ubica por su etiqueta de la

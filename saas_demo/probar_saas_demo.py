@@ -24,8 +24,8 @@ Que revisa:
   L) NODO INTEGRAL (Grupo 3, #64): lo ven los dos usuarios; las celdas manuales (C3 tarifa por km,
      C4 meta, C8 accion Meta Ads, C22 SINPE) las cambia solo administracion; C14 y C15 solo lectura;
      'Interface digital' B4 lee la tarifa nueva; evento con valor anterior y nuevo.
-     "Oferta hoy" (C16 'Activacion de Promocion', #84): la escribe el robot; en la copia la actualiza
-     administracion con un boton; despacho la ve pero no la puede actualizar.
+     "Oferta hoy" (C16 'Activacion de Promocion', #84): la escribe el robot; la pantalla solo la muestra.
+     || 4-oct-2026 (noche): se quito el boton del SaaS (decision del usuario); nadie la actualiza a mano.
   M) Tablas cruce maestras (Grupo 3): solo lectura para los dos usuarios, sin formularios.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
@@ -619,31 +619,31 @@ def main():
 
     # "Oferta hoy": C16 'Activacion de Promocion' la escribe el robot (#84)
     oferta = ap.leer_activacion()
-    pagina = despacho.get("/nodo-integral")
-    revisar(b"Oferta hoy" in pagina.data and b"Actualizar indicador de oferta" not in pagina.data,
-            "despacho ve el indicador 'Oferta hoy' pero no el boton para actualizarlo")
+    for nombre_cliente, cliente in (("despacho", despacho), ("administracion", admin)):
+        pagina = cliente.get("/nodo-integral")
+        revisar(b"Oferta hoy" in pagina.data and b"Actualizar indicador de oferta" not in pagina.data,
+                f"{nombre_cliente} ve el indicador 'Oferta hoy' y no hay boton para actualizarlo")
     huella_antes = huella(COPIA_TEMPORAL)
-    respuesta = despacho.post("/nodo-integral/oferta", data={"ficha": ficha_despacho})
-    revisar(respuesta.status_code == 403 and huella(COPIA_TEMPORAL) == huella_antes,
-            "despacho no puede actualizarlo: el servidor responde 403 y el Excel no cambia")
-    revisar(b"Actualizar indicador de oferta" in admin.get("/nodo-integral").data, "administracion si ve el boton")
-    admin.post("/nodo-integral/oferta", data={"ficha": ficha_admin})
+    respuesta = admin.post("/nodo-integral/oferta", data={"ficha": ficha_admin})
+    revisar(respuesta.status_code == 404 and huella(COPIA_TEMPORAL) == huella_antes,
+            "el SaaS no tiene forma de escribir C16: esa direccion no existe (404) y el Excel no cambia")
+    ap.actualizar_activacion_promocion()          # como lo hace la tarea diaria: el robot, sin el SaaS
+    datos.olvidar_cache()
     despues_oferta = ap.leer_activacion()
     revisar(despues_oferta["valor_celda"] == oferta["valor"] and despues_oferta["al_dia"],
             f"C16 'Activacion de Promocion': {oferta['valor_celda']!r} -> {despues_oferta['valor_celda']!r} ({despues_oferta['motivo']})")
     if not oferta["al_dia"]:
         evento = ultimo_evento()
-        revisar(evento.get("TIPO_EVENTO") == ap.TIPO_EVENTO and evento.get("ORIGEN") == "SaaS (administracion)"
+        revisar(evento.get("TIPO_EVENTO") == ap.TIPO_EVENTO and evento.get("ORIGEN") == "Robot Python"
                 and evento.get("ID_ENTIDAD") == "C16", f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
     huella_antes = huella(COPIA_TEMPORAL)
-    admin.post("/nodo-integral/oferta", data={"ficha": ficha_admin})
-    pagina = admin.get("/nodo-integral")
-    revisar(huella(COPIA_TEMPORAL) == huella_antes and "ya estaba al día".encode() in pagina.data,
-            "actualizar otra vez: ya estaba al dia, no se escribe nada")
-    texto = html.unescape(pagina.get_data(as_text=True))
+    resultado = ap.actualizar_activacion_promocion()
+    revisar(resultado["estado"] == "SIN_CAMBIO" and huella(COPIA_TEMPORAL) == huella_antes,
+            "el robot otra vez: SIN_CAMBIO, no se escribe nada")
+    texto = html.unescape(despacho.get("/nodo-integral").get_data(as_text=True))
     revisar(f'sello--grande">{despues_oferta["valor_celda"]}<' in texto
             and all(c["codigo"] in texto for c in despues_oferta["combos"]),
-            f"la pantalla dice Oferta hoy: {despues_oferta['valor_celda']}, con el detalle")
+            f"despues de la corrida del robot la pantalla dice Oferta hoy: {despues_oferta['valor_celda']}, con el detalle")
 
     # ------------------------------------------------------------------ M
     paso("M) Tablas cruce maestras: solo lectura para los dos usuarios")

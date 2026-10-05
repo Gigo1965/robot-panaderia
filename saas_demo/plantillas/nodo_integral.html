@@ -9,20 +9,12 @@
 <section class="captura">
   <h2>Oferta hoy: {% if not oferta.definido %}<span class="sello sello--anulado sello--grande">Sin definir</span>{% elif oferta.valor_celda == 'ON' %}<span class="sello sello--entregado sello--grande">ON</span>{% else %}<span class="sello sello--pendiente sello--grande">OFF</span>{% endif %}</h2>
   {% if not oferta.definido %}
-  <p class="aviso aviso--aviso">La celda {{ oferta.celda }} (Activación de Promoción) todavía tiene el texto de relleno del Excel. Según los datos de esta hoja corresponde {{ oferta.valor }}.</p>
+  <p class="aviso aviso--aviso">La celda {{ oferta.celda }} (Activación de Promoción) todavía tiene el texto de relleno del Excel: el robot la escribe en su próxima corrida. Según los datos de esta hoja corresponde {{ oferta.valor }}.</p>
   {% elif not oferta.al_dia %}
-  <p class="aviso aviso--aviso">El indicador está atrasado: la celda {{ oferta.celda }} dice {{ oferta.valor_celda }} y según los datos de esta hoja corresponde {{ oferta.valor }}.</p>
+  <p class="aviso aviso--aviso">El indicador está atrasado: la celda {{ oferta.celda }} dice {{ oferta.valor_celda }} y según los datos de esta hoja corresponde {{ oferta.valor }}. El robot lo corrige en su próxima corrida.</p>
   {% endif %}
   <p class="nota">{% if oferta.tipo == 'COMBOS' %}Combos activos: {% for c in oferta.combos %}{{ c.codigo }} {{ c.nombre }}{% if not loop.last %}, {% endif %}{% endfor %}.{% elif oferta.tipo == 'DESCUENTO_GENERAL' %}Descuento general de {{ '%g'|format(oferta.porcentaje) }} % en todos los productos por {{ 'feriado' if oferta.detonador == 'FERIADO' else 'día de pago' }}. Ese día no hay combos.{% else %}No hay ningún combo activo y hoy no es feriado ni día de pago.{% endif %} ON significa que hoy rige una oferta: algún combo activo, o el descuento general de día de pago o feriado.</p>
-  {% if es_admin %}
-  <form method="post" action="{{ url_for('grupo3.actualizar_oferta') }}" data-escribe class="formulario formulario--fila">
-    <input type="hidden" name="ficha" value="{{ ficha }}">
-    <button class="boton boton--secundario" type="submit">Actualizar indicador de oferta</button>
-  </form>
-  <p class="nota">En el Excel maestro el robot actualiza esta celda en la tarea diaria. Sobre esta copia de demostración la tarea diaria no corre: el botón llama a la misma función del robot, que solo escribe si el valor cambió.</p>
-  {% else %}
-  <p class="nota">El indicador lo escribe el robot. En esta copia de demostración lo actualiza administración.</p>
-  {% endif %}
+  <p class="nota">Esta celda ({{ oferta.celda }}) la escribe el robot; nadie la digita. En el Excel maestro lo hace la tarea diaria, después de actualizar el clima y el calendario.</p>
 </section>
 
 {% if es_admin %}
