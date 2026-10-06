@@ -47,6 +47,10 @@ Que revisa:
      carga a cada producto: de 0 a 100 %, la suma de los dos productos no pasa de 100 %, aviso si el costo
      queda sobre el precio), Planilla, Gasto operacional y Valor activos: lectura para los dos usuarios,
      cambios solo administracion; evento con valor anterior y nuevo y origen SaaS.
+  R) Grupo 5, paquete 1 (6-oct-2026): 'Flujo caja diario' y 'flujo caja anual' las ve SOLO administracion (despacho
+     recibe 403 y su menu no muestra el grupo). Caja chica del dia (columna G, #66): total del dia con motivo, de 0 a
+     500,000, sin fechas futuras; el Excel la suma a los egresos y la resta del saldo de caja. Salidas de efectivo del
+     mes (fila 19, #67): valor fijo en la celda del mes. Evento con valor anterior y nuevo y origen SaaS.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
@@ -57,6 +61,7 @@ Escribe 13 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca
 || 5-oct-2026 (tarde): se agrego O (composicion de los combos), con 3 escrituras mas: ahora son 24 y tarda cerca de 5 minutos.
 || 5-oct-2026 (noche): se agrego P (hojas de costo, Grupo 4), con 2 escrituras mas: ahora son 26 y tarda cerca de 6.5 minutos.
 || 5-oct-2026 (noche): se agrego Q (Grupo 4, paquete 2), con 8 escrituras mas: ahora son 34 y tarda cerca de 8 minutos.
+|| 6-oct-2026: se agrego R (Grupo 5, paquete 1), con 3 escrituras mas: ahora son 37 y tarda cerca de 8.5 minutos.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
@@ -65,6 +70,7 @@ import hashlib
 import html
 import re
 import sys
+from datetime import timedelta
 
 from .ensayo import COPIA_LOCAL, preparar_copia_temporal
 
@@ -82,6 +88,7 @@ from conexion_drive import config as config_robot                # noqa: E402
 from conexion_drive import leer_excel                            # noqa: E402
 from conexion_drive.recalculo import buscar_errores             # noqa: E402
 from conexion_drive.tablas import leer_tabla, obtener_tabla      # noqa: E402
+from conexion_drive.tiempo import ahora_local                    # noqa: E402
 from microservicios.grupo1_captura_operativa import descuento_general as dg   # noqa: E402
 from microservicios.grupo1_captura_operativa import pedidos_digitales as pd   # noqa: E402
 from microservicios.grupo1_captura_operativa.catalogo import Catalogo          # noqa: E402
@@ -92,6 +99,7 @@ from microservicios.grupo3_integraciones import combos_composicion as co      # 
 from microservicios.grupo3_integraciones import combos_config as cc           # noqa: E402
 from microservicios.grupo3_integraciones import nodo_manual as nm             # noqa: E402
 from microservicios.grupo4_costeo import costeo as cs                         # noqa: E402
+from microservicios.grupo5_financiero import finanzas as fz                   # noqa: E402
 
 errores = []
 
@@ -1129,6 +1137,97 @@ def main():
             "dar de baja la vitrina (cantidad 0): la fila se conserva, la pantalla dice De baja y el total de activos vuelve a su valor")
     ws_fcp = leer_excel()["flujo caja proyecto"]
     revisar(ws_fcp["D23"].value == total_activos, "'flujo caja proyecto'!D23 lee el total de activos")
+
+    # ------------------------------------------------------------------ R
+    paso("R) Flujo caja diario (caja chica) y Flujo caja anual (salidas de efectivo): solo administracion")
+    hoy_r = ahora_local().date()
+    hoy_texto = hoy_r.isoformat()
+
+    def dia_hoy(leido):
+        return next(d for d in leido["dias"] if d["fecha"] == hoy_r)
+
+    diario_0 = fz.leer_flujo_diario(leer_excel(), hoy=hoy_r)
+    anual_0 = fz.leer_flujo_anual(leer_excel())
+    menu_despacho, menu_admin = despacho.get("/ventas-despacho").data, admin.get("/ventas-despacho").data
+    revisar(despacho.get("/flujo-caja-diario").status_code == 403 and despacho.get("/flujo-caja-anual").status_code == 403
+            and b"5 Financiero" not in menu_despacho and b"/flujo-caja-diario" not in menu_despacho
+            and b"4 Costeo" in menu_despacho and b"/valor-activos" in menu_despacho,
+            "despacho no ve el Grupo 5: las dos pantallas responden 403 y su menu no muestra '5 Financiero' (sigue viendo "
+            "Valor activos del Grupo 4)")
+    pagina = admin.get("/flujo-caja-diario?actualizar=1")
+    texto = html.unescape(pagina.get_data(as_text=True))
+    revisar(pagina.status_code == 200 and pagina.data.count(b"data-escribe") == 1 and "Saldo de caja actual" in texto
+            and all(r["concepto"] in texto for r in diario_0["resumen"]) and b"5 Financiero" in menu_admin
+            and b"/flujo-caja-diario" in menu_admin and b"/flujo-caja-anual" in menu_admin,
+            f"administracion ve Flujo caja diario: saldo de caja, resumen ({len(diario_0['resumen'])} conceptos), "
+            f"los ultimos {len(diario_0['dias'])} dias y un formulario; su menu muestra '5 Financiero'")
+    pagina = admin.get("/flujo-caja-anual?actualizar=1")
+    texto = html.unescape(pagina.get_data(as_text=True))
+    revisar(pagina.status_code == 200 and pagina.data.count(b"data-escribe") == 1
+            and all(f["etiqueta"] in texto for f in anual_0["filas"]),
+            f"administracion ve Flujo caja anual ({len(anual_0['filas'])} filas con etiqueta) con un formulario")
+    huella_antes = huella(COPIA_TEMPORAL)
+    codigos = [enviar(despacho, ficha_despacho, "/flujo-caja-diario/caja-chica", fecha=hoy_texto, monto="100", motivo="Intruso").status_code,
+               enviar(despacho, ficha_despacho, "/flujo-caja-anual/salidas", mes="1", monto="100").status_code]
+    revisar(codigos == [403, 403] and huella(COPIA_TEMPORAL) == huella_antes,
+            "despacho no puede escribir en el Grupo 5: las 2 escrituras responden 403 y el Excel no cambia")
+
+    # --- Caja chica del dia
+    manana = hoy_r + timedelta(days=1)
+    for campos in ({"fecha": manana.isoformat(), "monto": "100", "motivo": "Futuro"},
+                   {"fecha": hoy_texto, "monto": "-5", "motivo": "Negativo"},
+                   {"fecha": hoy_texto, "monto": f"{fz.TOPE_CAJA_CHICA + 1}", "motivo": "Sobre el tope"},
+                   {"fecha": hoy_texto, "monto": "100", "motivo": "=1+1"},
+                   {"fecha": "ayer", "monto": "100", "motivo": "Fecha mal escrita"}):
+        enviar(admin, ficha_admin, "/flujo-caja-diario/caja-chica", **campos)
+    enviar(admin, ficha_admin, "/flujo-caja-diario/caja-chica", fecha=hoy_texto, monto="100", motivo="   ")
+    texto = texto_de(admin, "/flujo-caja-diario")
+    revisar(texto.count("El robot no lo permitió") == 5 and "todavia no llega" in texto and "Elige el día" in texto
+            and huella(COPIA_TEMPORAL) == huella_antes,
+            "caja chica: fecha de mañana, monto negativo, monto sobre el tope, motivo que empieza con '=', fecha mal escrita "
+            "y motivo vacio: rechazados, no se escribe nada")
+    caja_0, egresos_0 = dia_hoy(diario_0)["caja_chica"] or 0, suma_flujo(8)
+    enviar(admin, ficha_admin, "/flujo-caja-diario/caja-chica", fecha=hoy_texto, monto=f"{caja_0 + 2500:g}",
+           motivo="Vales de la prueba")
+    texto = texto_de(admin, "/flujo-caja-diario")
+    diario_1 = fz.leer_flujo_diario(leer_excel(), hoy=hoy_r)
+    revisar(dia_hoy(diario_1)["caja_chica"] == caja_0 + 2500 and round(suma_flujo(8) - egresos_0, 2) == 2500
+            and round(diario_0["saldo"] - diario_1["saldo"], 2) == 2500 and "Guardado en el Excel en" in texto
+            and "Vales de la prueba" in texto,
+            f"caja chica de hoy {caja_0:,.2f} -> {caja_0 + 2500:,.2f} (celda {dia_hoy(diario_1)['celda_caja']}): los egresos suben "
+            f"2,500 y el saldo de caja baja 2,500 ({diario_0['saldo']:,.2f} -> {diario_1['saldo']:,.2f}); la pantalla muestra "
+            "el aviso con el tiempo")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == fz.EVENTO_CAJA_CHICA and evento.get("ORIGEN") == "SaaS (administracion)"
+            and str(evento.get("ID_ENTIDAD")) == hoy_texto and "->" in str(evento.get("DETALLE"))
+            and "motivo: Vales de la prueba" in str(evento.get("DETALLE")),
+            f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    huella_antes = huella(COPIA_TEMPORAL)
+    enviar(admin, ficha_admin, "/flujo-caja-diario/caja-chica", fecha=hoy_texto, monto=f"{caja_0 + 2500:g}", motivo="Repetido")
+    revisar("No se escribió nada" in texto_de(admin, "/flujo-caja-diario") and huella(COPIA_TEMPORAL) == huella_antes,
+            "el mismo total otra vez: la pantalla avisa que ya era ese y no se escribe nada")
+    enviar(admin, ficha_admin, "/flujo-caja-diario/caja-chica", fecha=hoy_texto, monto=f"{caja_0:g}", motivo="Regreso de la prueba")
+    revisar(round(fz.leer_flujo_diario(leer_excel(), hoy=hoy_r)["saldo"] - diario_0["saldo"], 2) == 0,
+            "un total nuevo reemplaza al anterior: al devolver la caja chica de hoy a su valor, el saldo de caja vuelve al del inicio")
+
+    # --- Salidas de efectivo del mes
+    huella_antes = huella(COPIA_TEMPORAL)
+    for campos in ({"mes": "13", "monto": "100"}, {"mes": "11", "monto": "-1"}, {"mes": "11", "monto": "mucho"}):
+        enviar(admin, ficha_admin, "/flujo-caja-anual/salidas", **campos)
+    revisar(texto_de(admin, "/flujo-caja-anual").count("El robot no lo permitió") == 3 and huella(COPIA_TEMPORAL) == huella_antes,
+            "salidas de efectivo: mes 13, monto negativo y monto con letras: rechazados, no se escribe nada")
+    noviembre_0 = anual_0["salidas"]["meses"][10] or 0
+    enviar(admin, ficha_admin, "/flujo-caja-anual/salidas", mes="11", monto=f"{noviembre_0 + 40000:g}")
+    texto = texto_de(admin, "/flujo-caja-anual")
+    anual_1 = fz.leer_flujo_anual(leer_excel())
+    revisar(anual_1["salidas"]["meses"][10] == noviembre_0 + 40000 and "Guardado en el Excel en" in texto
+            and all(a == b for i, (a, b) in enumerate(zip(anual_0["salidas"]["meses"], anual_1["salidas"]["meses"])) if i != 10),
+            f"salidas de efectivo de noviembre {noviembre_0:,.2f} -> {noviembre_0 + 40000:,.2f} (fila {anual_1['salidas']['fila']}): "
+            "solo cambia ese mes; la pantalla muestra el aviso con el tiempo")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == fz.EVENTO_SALIDAS and evento.get("ORIGEN") == "SaaS (administracion)"
+            and str(evento.get("ID_ENTIDAD")) == "noviembre" and "->" in str(evento.get("DETALLE")),
+            f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")

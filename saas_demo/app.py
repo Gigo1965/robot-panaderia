@@ -72,6 +72,11 @@ MENU = [
         ("Gasto operacional", "grupo4.gasto_operacional", True),       # tambien solo administracion (misma decision)
         ("Valor activos", "grupo4.valor_activos", False),
     ]),
+    ("5 Financiero", [
+        # Decision del usuario (6-oct-2026): todo el Grupo 5 lo ve y lo cambia solo administracion.
+        ("Flujo caja diario", "grupo5.flujo_diario", True),
+        ("Flujo caja anual", "grupo5.flujo_anual", True),
+    ]),
 ]
 _intentos = {}          # direccion -> [fallos, bloqueado_hasta]
 
@@ -121,7 +126,9 @@ def _para_todas_las_pantallas():
         "ensayo": config.ENSAYO,
         # Solo en el ENSAYO de la PC (copia temporal) se muestran las claves de prueba.
         "cuentas_ensayo": list(config.USUARIOS.values()) if config.ENSAYO else [],
-        "menu": MENU,
+        # Un grupo sin ninguna pantalla para este usuario no aparece en su menu (el Grupo 5 es solo de administracion).
+        "menu": [(titulo, enlaces) for titulo, enlaces in MENU
+                 if session.get("rol") == config.ROL_ADMIN or any(not solo_admin for _, _, solo_admin in enlaces)],
         "ruta": request.endpoint or "",
     }
 
@@ -322,11 +329,13 @@ from .grupo1 import grupo1          # noqa: E402  Ventas despacho, descuento gen
 from .grupo2 import grupo2          # noqa: E402  Control de Inventario (existencia minima, #63) y Hornadas
 from .grupo3 import grupo3          # noqa: E402  NODO INTEGRAL (#64), tablas cruce maestras (lectura) y combos (#65)
 from .grupo4 import grupo4          # noqa: E402  Hojas de costo, planilla, gasto operacional y valor activos
+from .grupo5 import grupo5          # noqa: E402  Flujo caja diario (caja chica, #66) y flujo caja anual (salidas de efectivo, #67)
 
 app.register_blueprint(grupo1)
 app.register_blueprint(grupo2)
 app.register_blueprint(grupo3)
 app.register_blueprint(grupo4)
+app.register_blueprint(grupo5)
 
 
 # ----------------------------------------------------------------------------

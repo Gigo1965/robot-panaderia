@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block titulo %}Flujo caja diario{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Flujo caja diario</h1>
+  <p class="encabezado__resumen">Lo que entra y lo que sale cada día, tal como lo calcula el Excel: ventas de despacho, ventas digitales y compras. Aquí solo se digita una cosa: el total de gastos, vales y caja chica del día.</p>
+</div>
+
+<p class="cobro"><span>Saldo de caja actual (celda {{ leido.celda_saldo }})</span> <strong>{{ saldo_texto }}</strong></p>
+
+<section class="captura">
+  <h2>Caja chica del día</h2>
+  <form method="post" action="{{ url_for('grupo5.caja_chica') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--corto">
+      <label for="fecha">Día</label>
+      <input id="fecha" name="fecha" type="date" value="{{ leido.hoy.isoformat() }}" min="{{ leido.primera.isoformat() }}" max="{{ leido.hoy.isoformat() }}" required>
+    </div>
+    <div class="campo campo--corto">
+      <label for="monto">Total del día</label>
+      <input id="monto" name="monto" type="number" min="0" max="{{ leido.tope }}" step="0.01" inputmode="decimal" required>
+    </div>
+    <div class="campo campo--ancho">
+      <label for="motivo">Motivo</label>
+      <input id="motivo" name="motivo" type="text" maxlength="{{ largo_motivo }}" placeholder="Por ejemplo: vales del día y un flete" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar caja chica</button>
+  </form>
+  <p class="nota">Se digita el total del día, de ₡0 a {{ tope_texto }}, sin separador de miles. Un total nuevo reemplaza al anterior de ese día; para corregir, se guarda otra vez con el monto correcto. Se aceptan días desde el {{ primera_texto }} hasta hoy ({{ hoy_texto }}).</p>
+  <p class="nota">El cambio queda en RegistroEventos con el valor anterior, el nuevo y el motivo.</p>
+</section>
+
+<h2 class="subtitulo">Últimos {{ leido.dias|length }} días</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fecha</th>
+      <th scope="col" class="num">Ventas despacho</th>
+      <th scope="col" class="num">Ventas digitales</th>
+      <th scope="col" class="num">Envíos cobrados</th>
+      <th scope="col" class="num">Total ingresos</th>
+      <th scope="col" class="num">Materia prima</th>
+      <th scope="col" class="num">Compras externas</th>
+      <th scope="col" class="num">Caja chica</th>
+      <th scope="col" class="num">Total egresos</th>
+      <th scope="col" class="num">Flujo neto</th>
+      <th scope="col" class="num">Saldo acumulado</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for d in leido.dias %}
+    <tr>
+      <td data-titulo="Fecha">{{ d.fecha_texto }}{% if d.es_hoy %} <span class="sello sello--pendiente">Hoy</span>{% endif %}</td>
+      {% if d.calculado %}
+      <td data-titulo="Ventas despacho" class="num">{{ d.ventas_despacho_texto }}</td>
+      <td data-titulo="Ventas digitales" class="num">{{ d.ventas_digitales_texto }}</td>
+      <td data-titulo="Envíos cobrados" class="num">{{ d.envios_texto }}</td>
+      <td data-titulo="Total ingresos" class="num">{{ d.ingresos_texto }}</td>
+      <td data-titulo="Materia prima" class="num">{{ d.materia_prima_texto }}</td>
+      <td data-titulo="Compras externas" class="num">{{ d.compras_externas_texto }}</td>
+      <td data-titulo="Caja chica" class="num"><strong>{{ d.caja_chica_texto }}</strong></td>
+      <td data-titulo="Total egresos" class="num">{{ d.egresos_texto }}</td>
+      <td data-titulo="Flujo neto" class="num">{{ d.neto_texto }}</td>
+      <td data-titulo="Saldo acumulado" class="num">{{ d.saldo_texto }}</td>
+      {% else %}
+      <td data-titulo="Estado" colspan="6">Sin calcular todavía</td>
+      <td data-titulo="Caja chica" class="num"><strong>{{ d.caja_chica_texto }}</strong></td>
+      <td colspan="3"></td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja Flujo caja diario, filas {{ leido.dias[-1].fila }} a {{ leido.dias[0].fila }}. La caja chica es la columna {{ leido.columna_caja }}; las demás columnas son fórmulas.{% if sin_calcular %} La hoja avanza un día cada vez que el robot guarda algo: un día "sin calcular" se llena con la primera escritura de ese día.{% endif %}</p>
+
+<h2 class="subtitulo">Resumen de todo el periodo</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Concepto</th>
+      <th scope="col">Celda</th>
+      <th scope="col" class="num">Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in leido.resumen %}
+    <tr>
+      <td data-titulo="Concepto">{{ r.concepto }}</td>
+      <td data-titulo="Celda">{{ r.celda }}</td>
+      <td data-titulo="Total" class="num">{% if r.celda == leido.celda_saldo %}<strong>{{ r.total_texto }}</strong>{% else %}{{ r.total_texto }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Desde el {{ primera_texto }}. Solo cuentan las ventas de despacho con orden correcta y los pedidos digitales confirmados.</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>El botón llama a la función <code>registrar_caja_chica</code> del robot, que escribe una sola celda: la de caja chica en la fila de ese día. El Excel suma ese monto a los egresos del día y lo resta del saldo de caja.</p>
+  <p>Las ventas y las compras no se digitan aquí: llegan solas desde Ventas despacho, Pedidos digitales e Ingreso de inventario.</p>
+</details>
+{% endblock %}

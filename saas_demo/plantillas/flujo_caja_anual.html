@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block titulo %}Flujo caja anual{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Flujo caja anual</h1>
+  <p class="encabezado__resumen">El año mes por mes, tal como lo calcula el Excel a partir de las hornadas registradas y del gasto operacional. De las {{ formulas + 1 }} filas con datos, {{ formulas }} son fórmulas; la administración digita una: las salidas de efectivo del mes.</p>
+</div>
+
+<section class="captura">
+  <h2>Salidas de efectivo de un mes</h2>
+  <form method="post" action="{{ url_for('grupo5.salidas_efectivo') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--corto">
+      <label for="mes">Mes</label>
+      <select id="mes" name="mes" required>
+        <option value="">Mes</option>
+        {% for numero, corto, largo in meses %}
+        <option value="{{ numero }}">{{ largo }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="monto">Monto del mes</label>
+      <input id="monto" name="monto" type="number" min="0" max="{{ leido.tope }}" step="0.01" inputmode="decimal" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar salidas de efectivo</button>
+  </form>
+  <p class="nota">Se acepta de ₡0 en adelante, sin separador de miles. Cada mes es una celda aparte y queda como valor fijo: el cambio de un mes no toca los demás. El cambio queda en RegistroEventos con el valor anterior y el nuevo.</p>
+</section>
+
+<h2 class="subtitulo">Flujo por mes</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Cuenta</th>
+      <th scope="col">Quién lo escribe</th>
+      {% for numero, corto, largo in meses %}<th scope="col" class="num">{{ corto }}</th>{% endfor %}
+      <th scope="col" class="num">Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in leido.filas %}
+    {% if f.clase == 'titulo' %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      <td data-titulo="Cuenta" colspan="15"><strong>{{ f.etiqueta }}</strong></td>
+    </tr>
+    {% else %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      <td data-titulo="Cuenta">{{ f.etiqueta }}</td>
+      <td data-titulo="Quién lo escribe">{% if f.clase == 'manual' %}<span class="sello sello--pendiente">Administración</span>{% else %}Fórmula{% endif %}</td>
+      {% for texto in f.meses_texto %}<td data-titulo="{{ meses[loop.index0][1] }}" class="num">{{ texto }}</td>{% endfor %}
+      <td data-titulo="Total" class="num"><strong>{{ f.total_texto }}</strong></td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja flujo caja anual. En la fila Flujo Acumulado efectivo, el saldo con que cierra el año es el de diciembre; la columna Total de esa fila suma los doce acumulados y no es un saldo.</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>El botón llama a la función <code>registrar_salida_efectivo</code> del robot, que escribe solo la celda de ese mes en la fila Salidas de efectivo (fila {{ leido.salidas.fila }}). Las demás filas son fórmulas y el robot nunca escribe sobre ellas.</p>
+  <p>Las ventas, los costos y las cantidades salen de las hornadas del Histórico diario; el gasto operacional, de su hoja. Hoy ninguna fórmula de la hoja resta la fila Salidas de efectivo: el monto queda registrado en su mes para el control de la administración.</p>
+</details>
+{% endblock %}
