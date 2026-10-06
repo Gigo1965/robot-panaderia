@@ -34,6 +34,12 @@ Que revisa:
      (un producto de produccion propia y uno de reventa, cantidad entera de 1 a 10); el robot congela
      lo ya rebajado del inventario y reescribe el precio, el detalle y el mensaje; evento con lo
      anterior y lo nuevo.
+  P) Hojas de costo (Grupo 4): 'costo pan baguette' y 'costo cupcakes' las ven los dos usuarios (elementos
+     del costo, costo unitario, precio de referencia y utilidad); el precio de referencia (G28 / G27, Regla #9)
+     lo cambia solo administracion; bajo el costo unitario lo bloquea el robot; la tabla cruce maestra y los
+     combos leen el precio nuevo; evento con valor anterior y nuevo. Nota de C8 en NODO INTEGRAL (#96).
+     El cambio se prueba con el producto que tenga el costo unitario por debajo de su precio (la seccion K
+     deja una hornada de 10 Baguette, y con tan pocas unidades el costo unitario supera al precio).
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
@@ -42,6 +48,7 @@ Escribe 13 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca
 || 4-oct-2026 (noche): se agregaron L y M (Grupo 3a), con 4 escrituras mas: ahora son 17 y tarda cerca de 3.5 minutos.
 || 5-oct-2026: se agrego N (combos, Grupo 3b), con 4 escrituras mas: ahora son 21 y tarda cerca de 4.5 minutos.
 || 5-oct-2026 (tarde): se agrego O (composicion de los combos), con 3 escrituras mas: ahora son 24 y tarda cerca de 5 minutos.
+|| 5-oct-2026 (noche): se agrego P (hojas de costo, Grupo 4), con 2 escrituras mas: ahora son 26 y tarda cerca de 6.5 minutos.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
@@ -76,6 +83,7 @@ from microservicios.grupo3_integraciones import activacion_promocion as ap    # 
 from microservicios.grupo3_integraciones import combos_composicion as co      # noqa: E402
 from microservicios.grupo3_integraciones import combos_config as cc           # noqa: E402
 from microservicios.grupo3_integraciones import nodo_manual as nm             # noqa: E402
+from microservicios.grupo4_costeo import costeo as cs                         # noqa: E402
 
 errores = []
 
@@ -841,6 +849,111 @@ def main():
             f"se devolvio la composicion ({final['detalle']}): el precio y las salidas en combos del inventario son los del inicio")
     revisar([c["codigo"] for c in cc.leer_combos()] == list(combos_inicio),
             "los combos siguen siendo los mismos: las filas de historia no se confunden con combos")
+
+    # ------------------------------------------------------------------ P
+    paso("P) Hojas de costo: lectura para todos; precio de referencia solo administracion (Regla #9)")
+
+    def costeo_de(codigo):
+        return next(c for c in cs.leer_costeo(leer_excel()) if c["codigo"] == codigo)
+
+    def precio_tcm(codigo):
+        ws, tabla = obtener_tabla(leer_excel(), "TABLA CRUCE MAESTRA", "TablaProductos")
+        return round(float(next(f for f in leer_tabla(ws, tabla) if str(f.get("Codigo")).strip() == codigo)["Precio"]), 2)
+
+    def combo_con(producto):
+        return next(c for c in co.leer_composicion()["combos"] if any(parte["producto"] == producto for parte in c["componentes"]))
+
+    def guardar_precio(cliente, ficha, codigo, precio):
+        return cliente.post("/costo/precio-referencia", data={"producto": codigo, "precio": precio, "ficha": ficha})
+
+    pantallas_costo = (("/costo-pan-baguette", "P01"), ("/costo-cupcakes", "Pa01"))
+    for ruta, codigo in pantallas_costo:
+        hoja_costo = costeo_de(codigo)
+        elementos = [f["elemento"] for s in hoja_costo["secciones"] for f in s["filas"]]
+        pagina = despacho.get(f"{ruta}?actualizar=1")
+        texto = html.unescape(pagina.get_data(as_text=True))
+        revisar(pagina.status_code == 200 and all(e in texto for e in elementos)
+                and f"₡{hoja_costo['costo_unitario']:,.2f}" in texto and f"₡{hoja_costo['precio_referencia']:,.2f}" in texto,
+                f"despacho ve '{hoja_costo['hoja']}': {len(elementos)} elementos del costo, costo unitario "
+                f"{hoja_costo['costo_unitario']:,.2f} y precio de referencia {hoja_costo['precio_referencia']:,.2f}")
+        revisar(b"data-escribe" not in pagina.data and b'name="precio"' not in pagina.data,
+                f"'{hoja_costo['hoja']}' (despacho): sin formulario, es solo lectura")
+        pagina = admin.get(ruta)
+        revisar(pagina.data.count(b'name="precio"') == 1 and "Guardar precio de referencia".encode() in pagina.data
+                and f"celda {hoja_costo['celda_precio']}".encode() in pagina.data,
+                f"administracion ve el formulario del precio de referencia (celda {hoja_costo['celda_precio']})")
+    revisar(b"4 Costeo" in despacho.get("/costo-pan-baguette").data, "el menu muestra el grupo '4 Costeo'")
+
+    # El cambio se prueba con un producto cuyo costo unitario este por debajo de su precio de referencia.
+    # (La seccion K deja cargada una hornada de 10 Baguette: con tan pocas unidades su costo unitario
+    # queda por encima del precio y el robot, con razon, no deja escribir un precio menor que ese costo.)
+    hojas_costo = cs.leer_costeo(leer_excel())
+    con_margen = [c for c in hojas_costo if c["costo_unitario"] is not None and c["precio_referencia"] is not None
+                  and c["costo_unitario"] + 10 < c["precio_referencia"]]
+    revisar(bool(con_margen), "hay al menos un producto con el costo unitario por debajo de su precio de referencia")
+    if not con_margen:
+        return 1
+    for sin_margen in (c for c in hojas_costo if c not in con_margen and c["costo_unitario"] > c["precio_referencia"] + 10):
+        huella_antes = huella(COPIA_TEMPORAL)
+        guardar_precio(admin, ficha_admin, sin_margen["codigo"], f"{sin_margen['precio_referencia'] + 10:.2f}")
+        pagina = admin.get(dict((c, r) for r, c in pantallas_costo)[sin_margen["codigo"]])
+        revisar(b"BLOQUEADO" in pagina.data and huella(COPIA_TEMPORAL) == huella_antes,
+                f"{sin_margen['nombre']}: la hornada cargada es pequeña y su costo unitario ({sin_margen['costo_unitario']:,.2f}) "
+                f"supera al precio de referencia ({sin_margen['precio_referencia']:,.2f}): el robot bloquea un precio que siga "
+                "bajo el costo y no escribe nada")
+    inicio = con_margen[0]
+    codigo_p = inicio["codigo"]
+    ruta_p = dict((c, r) for r, c in pantallas_costo)[codigo_p]
+    precio_inicio, costo_inicio = inicio["precio_referencia"], inicio["costo_unitario"]
+    combo_inicio_p = combo_con(inicio["nombre"])
+    huella_antes = huella(COPIA_TEMPORAL)
+    respuesta = guardar_precio(despacho, ficha_despacho, codigo_p, f"{precio_inicio + 10:.2f}")
+    revisar(respuesta.status_code == 403 and huella(COPIA_TEMPORAL) == huella_antes,
+            "despacho no puede cambiar el precio de referencia: el servidor responde 403 y el Excel no cambia")
+    bajo_el_costo = f"{max(costo_inicio - 1, 1):.2f}"
+    for codigo, precio in ((codigo_p, bajo_el_costo), (codigo_p, "0"), (codigo_p, "-5"), (codigo_p, "abc"), ("L01", "900"),
+                           ("Zz99", "900")):
+        guardar_precio(admin, ficha_admin, codigo, precio)
+    pagina = admin.get(ruta_p)
+    revisar("El robot no lo permitió".encode() in pagina.data and b"BLOQUEADO" in pagina.data
+            and huella(COPIA_TEMPORAL) == huella_antes,
+            f"{inicio['nombre']}: precio bajo el costo unitario ({bajo_el_costo}), 0, negativo, texto, un producto de reventa "
+            "(L01) y un codigo que no existe: rechazados, no se escribe nada")
+    guardar_precio(admin, ficha_admin, codigo_p, "")
+    revisar("Escribe el precio de referencia".encode() in admin.get(ruta_p).data
+            and huella(COPIA_TEMPORAL) == huella_antes, "precio vacio: no se escribe nada")
+
+    precio_nuevo = round(precio_inicio + 10, 2)
+    guardar_precio(admin, ficha_admin, codigo_p, f"{precio_nuevo:.2f}")
+    pagina = admin.get(ruta_p)
+    ahora = costeo_de(codigo_p)
+    combo_ahora = combo_con(inicio["nombre"])
+    revisar(ahora["precio_referencia"] == precio_nuevo and round(ahora["costo_unitario"], 2) == round(costo_inicio, 2)
+            and round(ahora["utilidad"], 2) == round(precio_nuevo - costo_inicio, 2),
+            f"{inicio['nombre']}: precio de referencia {precio_inicio:,.2f} -> {precio_nuevo:,.2f} (celda {inicio['celda_precio']}); "
+            f"el costo unitario no cambia ({costo_inicio:,.2f}) y la utilidad pasa a {ahora['utilidad']:,.2f}")
+    revisar(precio_tcm(codigo_p) == precio_nuevo and round(combo_ahora["precio"], 2) > round(combo_inicio_p["precio"], 2),
+            f"el Excel recalculo: 'TABLA CRUCE MAESTRA' lee {precio_tcm(codigo_p):,.2f} y {combo_ahora['nombre']} sube de "
+            f"{combo_inicio_p['precio']:,.2f} a {combo_ahora['precio']:,.2f}")
+    revisar(b"Guardado en el Excel en" in pagina.data, "la pantalla muestra el aviso con el tiempo")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == "CONFIG_PRECIO_REFERENCIA" and evento.get("ORIGEN") == "SaaS (administracion)"
+            and evento.get("ID_ENTIDAD") == codigo_p and "->" in str(evento.get("DETALLE")),
+            f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    huella_antes = huella(COPIA_TEMPORAL)
+    guardar_precio(admin, ficha_admin, codigo_p, f"{precio_nuevo:.2f}")
+    revisar(huella(COPIA_TEMPORAL) == huella_antes and "ya era".encode() in admin.get(ruta_p).data,
+            "el mismo precio otra vez: SIN_CAMBIO, no se escribe nada")
+    texto = html.unescape(despacho.get(f"{ruta_p}?actualizar=1").get_data(as_text=True))
+    revisar(f"₡{precio_nuevo:,.2f}" in texto, "despacho ve el precio de referencia nuevo en la pantalla")
+    guardar_precio(admin, ficha_admin, codigo_p, f"{precio_inicio:.2f}")
+    final = costeo_de(codigo_p)
+    revisar(final["precio_referencia"] == precio_inicio and precio_tcm(codigo_p) == round(precio_inicio, 2)
+            and round(combo_con(inicio["nombre"])["precio"], 2) == round(combo_inicio_p["precio"], 2),
+            f"se devolvio el precio de referencia ({precio_inicio:,.2f}): la tabla cruce maestra y el combo vuelven a su valor")
+    texto = html.unescape(admin.get("/nodo-integral").get_data(as_text=True))
+    revisar("Es una prevista" in texto and "todavía no hay ninguna campaña" in texto,
+            "NODO INTEGRAL: la nota de C8 'Accion Meta Ads' dice que es una prevista (#96)")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")

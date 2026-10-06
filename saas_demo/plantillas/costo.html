@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block titulo %}{{ titulo }}{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>{{ titulo }}</h1>
+  <p class="encabezado__resumen">Lo que cuesta producir una unidad de {{ p.nombre }}, tal como lo calcula el Excel con la última hornada registrada. En esta hoja se digitan dos datos: la cantidad horneada, que se registra en la pantalla Hornadas, y el precio de referencia, que define la administración. Lo demás son fórmulas.</p>
+</div>
+
+<section class="captura">
+  <h2>Costo unitario: {{ cifras.costo_unitario }} <span class="sello sello--entregado sello--grande">Precio de referencia {{ cifras.precio_referencia }}</span></h2>
+  {% if hornada.hay %}
+  <p class="nota">Hornada cargada en la hoja: {{ hornada.cantidad|cantidad }} unidades, {{ hornada.fecha|fecha }}{% if hornada.hora %}, {{ hornada.hora|hora }}{% endif %} (celda {{ hornada.celda_cantidad }}).{% if hornada.anulada %} <span class="sello sello--anulado">Anulada</span> Esa hornada se anuló; la hoja conserva sus números hasta que se registre la siguiente.{% endif %}</p>
+  {% else %}
+  <p class="aviso aviso--aviso">La hoja no tiene una hornada cargada: el costo unitario se calcula al registrar una hornada de {{ p.nombre }}.</p>
+  {% endif %}
+  <table class="comandas">
+    <thead>
+      <tr>
+        <th scope="col">Dato</th>
+        <th scope="col">Celda</th>
+        <th scope="col" class="num">Valor</th>
+        <th scope="col">Quién lo escribe</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td data-titulo="Dato">Costo unitario</td>
+        <td data-titulo="Celda">{{ p.celda_costo }}</td>
+        <td data-titulo="Valor" class="num"><strong>{{ cifras.costo_unitario }}</strong></td>
+        <td data-titulo="Quién lo escribe">Fórmula: total de costos de producción entre las unidades de la hornada</td>
+      </tr>
+      <tr>
+        <td data-titulo="Dato">Precio de referencia</td>
+        <td data-titulo="Celda">{{ p.celda_precio }}</td>
+        <td data-titulo="Valor" class="num"><strong>{{ cifras.precio_referencia }}</strong></td>
+        <td data-titulo="Quién lo escribe"><span class="sello sello--pendiente">Administración</span> Es el precio de venta</td>
+      </tr>
+      <tr>
+        <td data-titulo="Dato">Utilidad por unidad con el precio de referencia</td>
+        <td data-titulo="Celda">{{ p.celda_utilidad }} y {{ p.celda_porcentaje }}</td>
+        <td data-titulo="Valor" class="num"><strong>{{ cifras.utilidad }}</strong> ({{ cifras.porcentaje }} sobre el costo)</td>
+        <td data-titulo="Quién lo escribe">Fórmula: precio de referencia menos costo unitario</td>
+      </tr>
+      <tr>
+        <td data-titulo="Dato">Precio calculado por costo y margen</td>
+        <td data-titulo="Celda">{{ p.celda_calculado }}</td>
+        <td data-titulo="Valor" class="num">{{ cifras.calculado }} (utilidad {{ cifras.utilidad_calculada }}, {{ cifras.porcentaje_calculado }})</td>
+        <td data-titulo="Quién lo escribe">Fórmula. Solo referencia: muestra cómo se mueve el costo; no es el precio de venta</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+{% if es_admin %}
+<section class="captura">
+  <h2>Precio de referencia de {{ p.nombre }}</h2>
+  <form method="post" action="{{ url_for('grupo4.precio_referencia') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="producto" value="{{ p.codigo }}">
+    <div class="campo campo--ancho">
+      <label for="precio">Precio de referencia nuevo, en colones (celda {{ p.celda_precio }})</label>
+      <input id="precio" name="precio" type="number" min="0.01" step="0.01" value="{{ p.precio_referencia if p.precio_referencia is number else '' }}" inputmode="decimal" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar precio de referencia</button>
+  </form>
+  <p class="nota">Debe ser mayor que 0 y no puede quedar por debajo del costo unitario actual ({{ cifras.costo_unitario }}): en ese caso el robot lo rechaza y no escribe nada. Se escribe sin separador de miles, con hasta 2 decimales.</p>
+  <p class="nota">De este precio leen la tabla cruce maestra, el mostrador, el bot y los combos que llevan {{ p.nombre }}. Las ventas ya registradas no cambian: cada venta guardó su precio al registrarse. El cambio queda en RegistroEventos con el valor anterior y el nuevo.</p>
+</section>
+{% else %}
+<p class="nota">El precio de referencia lo cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
+{% endif %}
+
+{% for s in p.secciones %}
+<h2 class="subtitulo">{{ s.titulo }}</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Elemento</th>
+      <th scope="col" class="num">{% if loop.first %}Cantidad{% else %}Parte que se carga{% endif %}</th>
+      <th scope="col" class="num">{% if loop.first %}Costo por unidad{% elif loop.index == 2 %}Sueldo del mes{% else %}Recibo del mes{% endif %}</th>
+      <th scope="col" class="num">{% if loop.index == 2 %}Costo del mes{% elif loop.first %}Costo de la hornada{% else %}Costo del día{% endif %}</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in s.filas %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      <td data-titulo="Elemento">{{ f.elemento }}</td>
+      <td data-titulo="Cantidad" class="num">{{ f.cantidad_texto }}</td>
+      <td data-titulo="Precio" class="num">{{ f.precio_texto }}</td>
+      <td data-titulo="Costo" class="num">{{ f.costo_texto }}</td>
+    </tr>
+    {% endfor %}
+    <tr>
+      <td data-titulo="Fila">{{ s.celda_total }}</td>
+      <td data-titulo="Elemento"><strong>Total{% if loop.index == 2 %} de un día (la suma del mes entre 30){% elif loop.index == 3 %} del día{% endif %}</strong></td>
+      <td class="num"></td>
+      <td class="num"></td>
+      <td data-titulo="Costo" class="num"><strong>{{ s.total_texto }}</strong></td>
+    </tr>
+  </tbody>
+</table>
+{% endfor %}
+
+<h2 class="subtitulo">Resumen</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Celda</th>
+      <th scope="col">Dato</th>
+      <th scope="col" class="num">Valor</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in p.resumen %}
+    <tr>
+      <td data-titulo="Celda">{{ r.celda }}</td>
+      <td data-titulo="Dato">{{ r.etiqueta }}</td>
+      <td data-titulo="Valor" class="num"><strong>{{ r.texto }}</strong></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja {{ p.hoja }}. Los nombres de los elementos se muestran tal como están escritos en el Excel.{% for texto, vista in otras %} <a class="enlace" href="{{ url_for(vista) }}">Ver {{ texto }}</a>{% endfor %}</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>El costo de los materiales es la cantidad de la hornada por el costo de cada porción de la receta; ese costo sale de la tabla cruce maestra MP, que el robot actualiza con la API de catálogo del proveedor.</p>
+  <p>La mano de obra toma el sueldo de panadero y ayudante de la hoja planilla, y el agua y la electricidad toman el monto del mes de la hornada en la hoja gasto operacional. La parte que se carga a este producto es un dato fijo del modelo.</p>
+  <p>Como los costos del día se reparten entre las unidades horneadas, una hornada más grande baja el costo unitario. Por eso el precio de venta es el precio de referencia y no el precio calculado: producir más se ve como más utilidad.</p>
+  <p>El botón llama a la función <code>actualizar_precio_referencia</code> del robot, que escribe solo la celda del precio de referencia. Si el dato no se permite, el robot lo rechaza y no escribe nada.</p>
+</details>
+{% endblock %}

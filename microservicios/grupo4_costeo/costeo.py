@@ -30,6 +30,13 @@ Uso manual desde la Terminal (carpeta ROBOT PANADERO); con --local trabaja sobre
     py -m microservicios.grupo4_costeo.costeo --local gasto "Electricidad" 3 210000
     py -m microservicios.grupo4_costeo.costeo --local nuevo-activo "Refrigerador" 1 950000 8
     py -m microservicios.grupo4_costeo.costeo --local activo "Espátula" --cantidad 0
+
+|| 5-oct-2026 (SaaS Grupo 4, Decisiones Pendientes #78): las seis funciones reciben el dato
+OPCIONAL origen. Si no se entrega, el evento dice "Robot Python" como siempre; el SaaS entrega
+"SaaS (administracion)". No cambia ninguna validacion ni ninguna celda.
+Funcion nueva de LECTURA para la pantalla del SaaS: leer_costeo(wb) devuelve las dos hojas de
+costo tal como las calculo el Excel (elementos del costo, costo unitario, precio de referencia
+y utilidad). No escribe nada.
 """
 import os
 import sys
@@ -48,9 +55,18 @@ MODULO = "Costeo"
 # Mapa de celdas (verificado en el Excel maestro despues de la m005, 25-sep-2026)
 # ----------------------------------------------------------------------------
 PRECIO_REFERENCIA = {
-    "P01": {"hoja": "costo pan baguette", "precio": "G28", "costo": "D38", "nombre": "Baguette"},
-    "Pa01": {"hoja": "costo cupcakes", "precio": "G27", "costo": "D37", "nombre": "CupCake"},
+    "P01": {"hoja": "costo pan baguette", "precio": "G28", "costo": "D38", "nombre": "Baguette",
+            # || 5-oct-2026: celdas de solo LECTURA para leer_costeo (formulas del Excel)
+            "calculado": "G29", "utilidad_calculada": "G31", "porcentaje_calculado": "G32",
+            "utilidad": "H31", "porcentaje": "H32"},
+    "Pa01": {"hoja": "costo cupcakes", "precio": "G27", "costo": "D37", "nombre": "CupCake",
+             "calculado": "G28", "utilidad_calculada": "G30", "porcentaje_calculado": "G31",
+             "utilidad": "H30", "porcentaje": "H31"},
 }
+ORIGEN_ROBOT = "Robot Python"              # origen del evento cuando nadie entrega otro (#78)
+# leer_costeo: la tabla "Elementos del costo" empieza debajo de la fila 9 en las dos hojas.
+FILA_ELEMENTOS = 9
+SECCIONES_COSTO = ("costo materiales directos", "costo mano de obra directa", "costo indirecto de fabricacion")
 SINONIMOS_PRODUCTO = {"p01": "P01", "baguette": "P01", "pan baguette": "P01",
                       "pa01": "Pa01", "cupcake": "Pa01", "cupcakes": "Pa01"}
 
@@ -136,7 +152,8 @@ def _mes(valor):
 # ----------------------------------------------------------------------------
 # Motor comun: escribir celdas de entrada + evento con antes -> despues
 # ----------------------------------------------------------------------------
-def _aplicar(wb, hoja, cambios, tipo_evento, id_entidad, accion, avisos=(), valor_referencia=""):
+def _aplicar(wb, hoja, cambios, tipo_evento, id_entidad, accion, avisos=(), valor_referencia="",
+             origen=ORIGEN_ROBOT):
     """cambios: {celda: valor_nuevo}. Escribe solo lo que cambia y registra el evento."""
     ws = wb[hoja]
     reales = []
@@ -160,17 +177,75 @@ def _aplicar(wb, hoja, cambios, tipo_evento, id_entidad, accion, avisos=(), valo
         detalle += " | AVISO: " + " | ".join(avisos)
     evento = registrar_evento(wb, modulo=MODULO, tipo_evento=tipo_evento, entidad=hoja.strip(),
                               id_entidad=id_entidad, accion=accion, estado="OK",
-                              valor_referencia=valor_referencia, detalle=detalle)
+                              valor_referencia=valor_referencia, detalle=detalle,
+                              origen=origen or ORIGEN_ROBOT)
     return {"hubo_cambios": True, "estado": "OK", "hoja": hoja, "evento": evento,
             "cambios": [{"celda": c, "antes": a, "despues": n} for c, a, n in reales],
             "avisos": list(avisos)}
 
 
 # ----------------------------------------------------------------------------
+# 0) Lectura de las hojas de costo (pantalla del SaaS). No escribe nada.
+# ----------------------------------------------------------------------------
+def _numero(valor):
+    return valor if isinstance(valor, (int, float)) and not isinstance(valor, bool) else None
+
+
+def leer_costeo(wb):
+    """Las dos hojas de costo tal como las calculo el Excel. wb = libro de VALORES (leer_excel()).
+
+    Devuelve una lista, un producto por hoja ('costo pan baguette' y 'costo cupcakes'):
+      secciones: materiales directos, mano de obra directa e indirectos, cada una con sus filas
+                 (elemento, cantidad, precio, costo) y su total, tal como estan en la hoja;
+      resumen:   total de costos de produccion, unidades y costo unitario;
+      y las celdas del precio: el de referencia (lo digita la administracion), el calculado por
+      costo x margen (solo referencia, Regla #9) y la utilidad con cada uno.
+    Las filas se ubican por su TEXTO en la columna A, no por numero fijo.
+    """
+    productos = []
+    for codigo, cfg in PRECIO_REFERENCIA.items():
+        ws = wb[cfg["hoja"]]
+        fila_costo = int(cfg["costo"][1:])
+        secciones, resumen, actual = [], [], None
+        for fila in range(FILA_ELEMENTOS + 1, fila_costo + 1):
+            etiqueta = " ".join(str(ws[f"A{fila}"].value or "").split())
+            if not etiqueta:
+                continue
+            clave = _clave(etiqueta)
+            cantidad, precio, costo = (_numero(ws[f"{columna}{fila}"].value) for columna in "BCD")
+            if clave in SECCIONES_COSTO:
+                actual = {"titulo": etiqueta, "fila": fila, "filas": [], "total": None, "celda_total": None}
+                secciones.append(actual)
+            elif clave == "total" and actual is not None:
+                actual["total"], actual["celda_total"] = costo, f"D{fila}"
+                actual = None
+            elif actual is not None:
+                actual["filas"].append({"fila": fila, "elemento": etiqueta, "cantidad": cantidad,
+                                        "precio": precio, "costo": costo})
+            else:
+                resumen.append({"fila": fila, "etiqueta": etiqueta, "valor": costo, "celda": f"D{fila}"})
+        if len(secciones) != len(SECCIONES_COSTO):
+            raise KeyError(f"'{cfg['hoja']}': no encontre las {len(SECCIONES_COSTO)} secciones del costo "
+                           f"(encontre {len(secciones)}).")
+        producto = {"codigo": codigo, "nombre": cfg["nombre"], "hoja": cfg["hoja"],
+                    "secciones": secciones, "resumen": resumen,
+                    "costo_unitario": _numero(ws[cfg["costo"]].value), "celda_costo": cfg["costo"],
+                    "precio_referencia": _numero(ws[cfg["precio"]].value), "celda_precio": cfg["precio"]}
+        for dato in ("calculado", "utilidad_calculada", "porcentaje_calculado", "utilidad", "porcentaje"):
+            producto[dato] = _numero(ws[cfg[dato]].value)
+            producto[f"celda_{dato}"] = cfg[dato]
+        productos.append(producto)
+    return productos
+
+
+# ----------------------------------------------------------------------------
 # 1) Precio de referencia
 # ----------------------------------------------------------------------------
-def actualizar_precio_referencia(producto, precio):
-    """Precio de referencia de P01 (Baguette) o Pa01 (CupCake). Bloquea si queda bajo el costo."""
+def actualizar_precio_referencia(producto, precio, origen=ORIGEN_ROBOT):
+    """Precio de referencia de P01 (Baguette) o Pa01 (CupCake). Bloquea si queda bajo el costo.
+
+    origen (opcional, #78): quien pide el cambio; va al evento. El SaaS entrega "SaaS (administracion)".
+    """
     codigo = SINONIMOS_PRODUCTO.get(_clave(producto))
     if not codigo:
         raise CosteoInvalido(f"'{producto}' no es un producto de produccion propia (use P01 o Pa01).")
@@ -189,8 +264,12 @@ def actualizar_precio_referencia(producto, precio):
         else:
             avisos.append(f"No se pudo comparar con el costo unitario ({costo!r}): no hay una hornada "
                           "valida cargada en la hoja de costo.")
-        return _aplicar(wb, cfg["hoja"], {cfg["precio"]: precio}, "CONFIG_PRECIO_REFERENCIA",
-                        codigo, "UPDATE", avisos, valor_referencia=precio)
+        resultado = _aplicar(wb, cfg["hoja"], {cfg["precio"]: precio}, "CONFIG_PRECIO_REFERENCIA",
+                             codigo, "UPDATE", avisos, valor_referencia=precio, origen=origen)
+        # Datos para quien llama (la pantalla del SaaS); no cambian lo que se escribe.
+        resultado.update(codigo=codigo, producto=cfg["nombre"], celda=cfg["precio"], precio=precio,
+                         costo_unitario=costo if isinstance(costo, (int, float)) else None)
+        return resultado
 
     return editar_excel(_editar, descripcion=f"Precio de referencia {codigo}")
 
@@ -212,7 +291,7 @@ def _fila_plaza(ws, plaza):
                          "Ayudante de panadero, Despacho, Otros 1, Otros 2 (o una plaza agregada).")
 
 
-def actualizar_plaza(plaza, personas=None, sueldo=None):
+def actualizar_plaza(plaza, personas=None, sueldo=None, origen=ORIGEN_ROBOT):
     """Cambia el numero de personas y/o el sueldo de una plaza. El nombre (columna A) no se toca."""
     if personas is None and sueldo is None:
         raise CosteoInvalido("Indique personas y/o sueldo.")
@@ -227,12 +306,13 @@ def actualizar_plaza(plaza, personas=None, sueldo=None):
         fila = _fila_plaza(ws, plaza)
         nombre = str(ws[f"A{fila}"].value).strip()
         cambios = {f"{col}{fila}": valor for col, valor in cambios_pedidos.items()}
-        return _aplicar(wb, HOJA_PLANILLA, cambios, "CONFIG_PLANILLA", f"{nombre} (fila {fila})", "UPDATE")
+        return _aplicar(wb, HOJA_PLANILLA, cambios, "CONFIG_PLANILLA", f"{nombre} (fila {fila})", "UPDATE",
+                        origen=origen)
 
     return editar_excel(_editar, descripcion=f"Planilla {plaza}")
 
 
-def agregar_plaza(nombre, personas, sueldo):
+def agregar_plaza(nombre, personas, sueldo, origen=ORIGEN_ROBOT):
     """Plaza nueva en la siguiente fila libre (13-32). Las formulas de esa fila ya existen."""
     nombre = _texto(nombre, "Nombre de la plaza")
     personas = _entero(personas, "Numero de personas")
@@ -253,7 +333,8 @@ def agregar_plaza(nombre, personas, sueldo):
         if libre is None:
             raise CosteoInvalido("No quedan filas libres en planilla (13 a 32). Hace falta una migracion.")
         cambios = {f"A{libre}": nombre, f"B{libre}": personas, f"C{libre}": sueldo}
-        return _aplicar(wb, HOJA_PLANILLA, cambios, "CONFIG_PLANILLA", f"{nombre} (fila {libre})", "INSERT")
+        return _aplicar(wb, HOJA_PLANILLA, cambios, "CONFIG_PLANILLA", f"{nombre} (fila {libre})", "INSERT",
+                        origen=origen)
 
     return editar_excel(_editar, descripcion=f"Plaza nueva {nombre}")
 
@@ -261,7 +342,7 @@ def agregar_plaza(nombre, personas, sueldo):
 # ----------------------------------------------------------------------------
 # 3) Gasto operacional
 # ----------------------------------------------------------------------------
-def actualizar_gasto(rubro, mes, monto):
+def actualizar_gasto(rubro, mes, monto, origen=ORIGEN_ROBOT):
     """Monto de un rubro manual en un mes (1-12 o nombre del mes)."""
     fila = RUBROS_GASTO.get(_clave(rubro))
     if fila is None:
@@ -285,7 +366,8 @@ def actualizar_gasto(rubro, mes, monto):
                 avisos.append(f"{nombre} es un pago unico al año y ya tiene monto en: {', '.join(otros)}. "
                               "Se guardo igual; revise si hay que dejar en 0 el otro mes.")
         return _aplicar(wb, HOJA_GASTOS, {celda: monto}, "CONFIG_GASTO_OPERACIONAL",
-                        f"{nombre} / {MESES[numero_mes - 1]}", "UPDATE", avisos, valor_referencia=monto)
+                        f"{nombre} / {MESES[numero_mes - 1]}", "UPDATE", avisos, valor_referencia=monto,
+                        origen=origen)
 
     return editar_excel(_editar, descripcion=f"Gasto {rubro} mes {numero_mes}")
 
@@ -300,7 +382,7 @@ def _fila_activo(ws, nombre):
     return None
 
 
-def agregar_activo(nombre, cantidad, precio, vida_util):
+def agregar_activo(nombre, cantidad, precio, vida_util, origen=ORIGEN_ROBOT):
     """Activo nuevo en la primera fila de reserva libre (14-33). Solo se escriben A, B, C y E."""
     nombre = _texto(nombre, "Nombre del activo")
     cantidad = _entero(cantidad, "Cantidad")
@@ -317,12 +399,12 @@ def agregar_activo(nombre, cantidad, precio, vida_util):
             raise CosteoInvalido("No quedan filas de reserva en valor activos (14 a 33). Hace falta una migracion.")
         cambios = {f"A{libre}": nombre, f"B{libre}": cantidad, f"C{libre}": precio, f"E{libre}": vida_util}
         return _aplicar(wb, HOJA_ACTIVOS, cambios, "CONFIG_ACTIVO", f"{nombre} (fila {libre})", "INSERT",
-                        valor_referencia=round(cantidad * precio, 2))
+                        valor_referencia=round(cantidad * precio, 2), origen=origen)
 
     return editar_excel(_editar, descripcion=f"Activo nuevo {nombre}")
 
 
-def actualizar_activo(nombre, cantidad=None, precio=None, vida_util=None):
+def actualizar_activo(nombre, cantidad=None, precio=None, vida_util=None, origen=ORIGEN_ROBOT):
     """Cambia cantidad, precio y/o vida util. Dar de baja = cantidad 0 (la fila se conserva)."""
     if cantidad is None and precio is None and vida_util is None:
         raise CosteoInvalido("Indique cantidad, precio y/o vida util.")
@@ -342,7 +424,8 @@ def actualizar_activo(nombre, cantidad=None, precio=None, vida_util=None):
         real = str(ws[f"A{fila}"].value).strip()
         accion = "BAJA (cantidad 0)" if pedidos.get("B") == 0 else "UPDATE"
         cambios = {f"{col}{fila}": valor for col, valor in pedidos.items()}
-        return _aplicar(wb, HOJA_ACTIVOS, cambios, "CONFIG_ACTIVO", f"{real} (fila {fila})", accion)
+        return _aplicar(wb, HOJA_ACTIVOS, cambios, "CONFIG_ACTIVO", f"{real} (fila {fila})", accion,
+                        origen=origen)
 
     return editar_excel(_editar, descripcion=f"Activo {nombre}")
 

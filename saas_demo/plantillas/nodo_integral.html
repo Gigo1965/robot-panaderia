@@ -41,7 +41,7 @@
     </div>
     <button class="boton boton--principal" type="submit">{{ m.boton }}</button>
   </form>
-  <p class="nota">{{ m.nota }}{% if m.campo == 'tarifa_km' %} Se acepta de ₡1 a ₡5,000, en colones enteros; el 0 se rechaza porque sin tarifa el robot no puede cobrar el envío.{% elif m.campo == 'meta_venta' %} Se acepta de ₡0 en adelante, sin separador de miles.{% elif m.campo == 'sinpe' %} Son ocho dígitos y se guarda con el formato 8888-8888.{% endif %}</p>
+  <p class="nota">{{ m.nota }}{% if m.campo == 'tarifa_km' %} Se acepta de ₡1 a ₡5,000, en colones enteros; el 0 se rechaza porque sin tarifa el robot no puede cobrar el envío.{% elif m.campo == 'meta_venta' %} Se acepta de ₡0 en adelante, sin separador de miles.{% elif m.campo == 'sinpe' %} Son ocho dígitos y se guarda con el formato 8888-8888.{% elif m.campo == 'meta_ads' %} Es una prevista: todavía no hay ninguna campaña de publicidad, por eso la celda sigue sin definir y ningún proceso la lee. Cuando exista una campaña, la administración decidirá aquí según el movimiento del negocio, y sirve igual para cualquier plataforma (Meta, YouTube u otra). La lista completa de opciones se define en ese momento.{% endif %}</p>
   {% endfor %}
   <p class="nota">Cada cambio se guarda en una sola celda de la hoja NODO INTEGRAL y queda en RegistroEventos con el valor anterior y el nuevo.</p>
 </section>

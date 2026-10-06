@@ -15,4 +15,5 @@ En Render es un servicio aparte del bot (ver app.py).
     grupo3.py  NODO INTEGRAL (celdas manuales, #64) y lectura de las dos tablas cruce maestras
 || 5-oct-2026: grupo3.py tambien trae 'Tabla combos dinamicos': configuracion de cada combo (#65).
 || 5-oct-2026 (tarde): y la composicion de cada combo (#85), en la misma pantalla.
+|| 5-oct-2026 (noche): grupo4.py  Costo pan baguette y Costo cupcakes (lectura) y precio de referencia.
 """

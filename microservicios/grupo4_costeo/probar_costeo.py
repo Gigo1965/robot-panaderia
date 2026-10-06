@@ -8,6 +8,12 @@ contra el original (deben quedar identicas) y revisa los resultados calculados.
 Uso (desde la carpeta ROBOT PANADERO):
     py -m microservicios.grupo4_costeo.probar_costeo
 Tarda unos minutos: cada cambio valido se recalcula con LibreOffice, igual que en produccion.
+
+|| 5-oct-2026 (SaaS Grupo 4, #78): caso 15 = un cambio con origen "SaaS (administracion)" (son 15
+casos: 8 validos y 7 rechazados). Se revisa que los 7 eventos de antes sigan diciendo "Robot Python",
+que el nuevo diga "SaaS (administracion)" y que leer_costeo lea el precio nuevo. Los eventos CONFIG_
+se cuentan como NUEVOS (despues menos antes): asi la prueba sirve tambien sobre una copia que ya
+traiga eventos CONFIG_ de otras pantallas (antes exigia 7 en todo el libro).
 """
 import os
 import shutil
@@ -86,6 +92,8 @@ def main():
          estado="OK")
     caso(14, "Activo inexistente: RECHAZAR", costeo.actualizar_activo, "Nave espacial", cantidad=1,
          debe_fallar=True)
+    caso(15, "Precio de referencia CupCake = 345 con origen 'SaaS (administracion)' (#78)",
+         costeo.actualizar_precio_referencia, "Pa01", 345, origen="SaaS (administracion)", estado="OK")
 
     print("\n=== Revision final del libro ===")
     antes, despues = formulas(ORIGINAL), formulas(TEMPORAL)
@@ -97,14 +105,25 @@ def main():
 
     v = load_workbook(TEMPORAL, data_only=True)
     va, fcp, pl = v["valor activos "], v["flujo caja proyecto"], v["planilla"]
-    ev = v["RegistroEventos"]
-    eventos = sum(1 for fila in ev.iter_rows(min_row=5) if str(fila[3].value or "").startswith("CONFIG_"))
+    # Eventos CONFIG_ de costeo NUEVOS: los de la copia temporal que no estaban en el original.
+    def eventos_config(libro):
+        return [(fila[0].value, fila[3].value, fila[4].value) for fila in libro["RegistroEventos"].iter_rows(min_row=5)
+                if str(fila[3].value or "").startswith("CONFIG_")]
+    de_antes = {e[0] for e in eventos_config(load_workbook(ORIGINAL, data_only=True))}
+    nuevos = [e for e in eventos_config(v) if e[0] not in de_antes]
+    origenes = [e[2] for e in nuevos]
+    cupcake = next(p for p in costeo.leer_costeo(v) if p["codigo"] == "Pa01")
     chequeos = [
         ("Total activos D36 = 7,817,500 (6,876,500 + 950,000 - 9,000)", va["D36"].value == 7817500),
         ("flujo caja proyecto D23 = D36", fcp["D23"].value == va["D36"].value),
         ("Depreciacion Refrigerador F14 = 118,750", va["F14"].value == 118750),
         ("Planilla: sueldo total Repartidor D13 = 300,000", pl["D13"].value == 300000),
-        ("RegistroEventos: 7 eventos CONFIG_ nuevos", eventos == 7),
+        ("RegistroEventos: 8 eventos CONFIG_ nuevos (7 de antes + el del caso 15)", len(nuevos) == 8),
+        ("Origen: los 7 primeros 'Robot Python' y el del caso 15 'SaaS (administracion)' (#78)",
+         origenes[:7] == ["Robot Python"] * 7 and origenes[7:] == ["SaaS (administracion)"]),
+        ("leer_costeo lee el precio de referencia nuevo de CupCake (345) y su utilidad",
+         cupcake["precio_referencia"] == 345
+         and round(cupcake["utilidad"], 2) == round(345 - cupcake["costo_unitario"], 2)),
     ]
     for texto, ok in chequeos:
         resultados.append(ok)
