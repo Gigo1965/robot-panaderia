@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block titulo %}Valor activos{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Valor activos</h1>
+  <p class="encabezado__resumen">Los {{ leido.activos|length }} activos de la panadería. De cada uno se digitan la cantidad, el precio y la vida útil; el costo y la depreciación los calcula el Excel. Total de activos: {{ totales.total_activos }}. Quedan {{ leido.libres }} filas libres para activos nuevos.</p>
+</div>
+
+{% if es_admin %}
+<section class="captura">
+  <h2>Cambiar un activo</h2>
+  <form method="post" action="{{ url_for('grupo4.cambiar_activo') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--ancho">
+      <label for="activo">Activo</label>
+      <select id="activo" name="activo" required>
+        <option value="">Elige un activo</option>
+        {% for a in leido.activos %}
+        <option value="{{ a.activo }}">{{ a.activo }} ({{ a.cantidad_texto }} x {{ a.precio_texto }}, {{ a.vida_texto }} años)</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="cantidad">Cantidad</label>
+      <input id="cantidad" name="cantidad" type="number" min="0" max="9999" step="1" inputmode="numeric">
+    </div>
+    <div class="campo campo--corto">
+      <label for="precio">Precio unitario</label>
+      <input id="precio" name="precio" type="number" min="0" step="0.01" inputmode="decimal">
+    </div>
+    <div class="campo campo--corto">
+      <label for="vida_util">Vida útil, años</label>
+      <input id="vida_util" name="vida_util" type="number" min="0.01" max="99" step="0.01" inputmode="decimal">
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar activo</button>
+  </form>
+  <p class="nota">Deja vacío el dato que no cambia. Para dar de baja un activo se le pone cantidad 0: la fila se conserva. El cambio queda en RegistroEventos con el valor anterior y el nuevo.</p>
+</section>
+<section class="captura">
+  <h2>Agregar un activo</h2>
+  <form method="post" action="{{ url_for('grupo4.nuevo_activo') }}" data-escribe class="formulario formulario--fila" data-confirmar="Un activo agregado no se borra desde aquí; se da de baja con cantidad 0. ¿Agregarlo?">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--ancho">
+      <label for="nombre">Nombre del activo</label>
+      <input id="nombre" name="nombre" type="text" maxlength="60" autocomplete="off" required>
+    </div>
+    <div class="campo campo--corto">
+      <label for="cantidad-nuevo">Cantidad</label>
+      <input id="cantidad-nuevo" name="cantidad" type="number" min="0" max="9999" step="1" inputmode="numeric" required>
+    </div>
+    <div class="campo campo--corto">
+      <label for="precio-nuevo">Precio unitario</label>
+      <input id="precio-nuevo" name="precio" type="number" min="0" step="0.01" inputmode="decimal" required>
+    </div>
+    <div class="campo campo--corto">
+      <label for="vida-nuevo">Vida útil, años</label>
+      <input id="vida-nuevo" name="vida_util" type="number" min="0.01" max="99" step="0.01" inputmode="decimal" required>
+    </div>
+    <button class="boton boton--secundario" type="submit">Agregar activo</button>
+  </form>
+  <p class="nota">Va en la siguiente fila de reserva de la tabla, que ya tiene sus fórmulas.</p>
+</section>
+{% else %}
+<p class="nota">Los activos los cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
+{% endif %}
+
+<h2 class="subtitulo">Activos</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Activo</th>
+      <th scope="col" class="num">Cantidad</th>
+      <th scope="col" class="num">Precio</th>
+      <th scope="col" class="num">Costo</th>
+      <th scope="col" class="num">Vida útil</th>
+      <th scope="col" class="num">Depreciación anual</th>
+      <th scope="col" class="num">Depreciación mensual</th>
+      <th scope="col" class="num">Valor a 12 meses</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for a in leido.activos %}
+    <tr>
+      <td data-titulo="Fila">{{ a.fila }}</td>
+      <td data-titulo="Activo">{{ a.activo }}{% if a.cantidad == 0 %} <span class="sello sello--anulado">De baja</span>{% endif %}</td>
+      <td data-titulo="Cantidad" class="num"><strong>{{ a.cantidad_texto }}</strong></td>
+      <td data-titulo="Precio" class="num"><strong>{{ a.precio_texto }}</strong></td>
+      <td data-titulo="Costo" class="num">{{ a.costo_texto }}</td>
+      <td data-titulo="Vida útil" class="num"><strong>{{ a.vida_texto }}</strong></td>
+      <td data-titulo="Depreciación anual" class="num">{{ a.depreciacion_anual_texto }}</td>
+      <td data-titulo="Depreciación mensual" class="num">{{ a.depreciacion_mensual_texto }}</td>
+      <td data-titulo="Valor a 12 meses" class="num">{{ a.valor_12_meses_texto }}</td>
+    </tr>
+    {% endfor %}
+    <tr>
+      <td data-titulo="Fila"></td>
+      <td data-titulo="Activo"><strong>Totales</strong></td>
+      <td class="num"></td>
+      <td class="num"></td>
+      <td data-titulo="Costo" class="num"><strong>{{ totales.total_activos }}</strong></td>
+      <td class="num"></td>
+      <td data-titulo="Depreciación anual" class="num"><strong>{{ totales.depreciacion_anual }}</strong></td>
+      <td data-titulo="Depreciación mensual" class="num"><strong>{{ totales.depreciacion_mensual }}</strong></td>
+      <td data-titulo="Valor a 12 meses" class="num"><strong>{{ totales.valor_12_meses }}</strong></td>
+    </tr>
+  </tbody>
+</table>
+<p class="nota">Hoja valor activos. El total de activos (celda {{ leido.totales.celda_total_activos }}) es la inversión que lee el flujo de caja del proyecto. La depreciación y el valor a 12 meses son solo de referencia: no entran al flujo.</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>Los botones llaman a las funciones <code>actualizar_activo</code> y <code>agregar_activo</code> del robot, que escriben solo el nombre, la cantidad, el precio y la vida útil. Las fórmulas de cada fila ya existen y no se tocan.</p>
+</details>
+{% endblock %}

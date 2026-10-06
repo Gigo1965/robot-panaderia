@@ -3,7 +3,7 @@
 {% block contenido %}
 <div class="encabezado">
   <h1>{{ titulo }}</h1>
-  <p class="encabezado__resumen">Lo que cuesta producir una unidad de {{ p.nombre }}, tal como lo calcula el Excel con la última hornada registrada. En esta hoja se digitan dos datos: la cantidad horneada, que se registra en la pantalla Hornadas, y el precio de referencia, que define la administración. Lo demás son fórmulas.</p>
+  <p class="encabezado__resumen">Lo que cuesta producir una unidad de {{ p.nombre }}, tal como lo calcula el Excel con la última hornada registrada. En esta hoja se digita la cantidad horneada, que se registra en la pantalla Hornadas, y la administración define el precio de referencia y la proporción de sueldos, agua y electricidad que se carga al producto. Lo demás son fórmulas.</p>
 </div>
 
 <section class="captura">
@@ -70,6 +70,56 @@
 <p class="nota">El precio de referencia lo cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
 {% endif %}
 
+<h2 class="subtitulo">Proporción que se carga a {{ p.nombre }}</h2>
+<p class="nota">Es la parte del sueldo del mes de panadero y ayudante, y la parte del recibo de agua y de electricidad, que esta hoja carga al costo de {{ p.nombre }}. La define la administración, porque puede variar con lo que se produce. Por cada concepto, la suma de los dos productos no puede pasar de 100 %.</p>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Concepto</th>
+      <th scope="col">Celda</th>
+      <th scope="col" class="num">{{ p.nombre }}</th>
+      <th scope="col" class="num">El otro producto</th>
+      <th scope="col" class="num">Máximo para {{ p.nombre }}</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for x in p.proporciones %}
+    <tr>
+      <td data-titulo="Concepto">{{ x.etiqueta }} ({{ x.sobre }})</td>
+      <td data-titulo="Celda">{{ x.celda }}</td>
+      <td data-titulo="{{ p.nombre }}" class="num"><strong>{{ x.texto }}</strong></td>
+      <td data-titulo="El otro producto" class="num">{{ x.otro_producto }}: {{ x.texto_otro }}</td>
+      <td data-titulo="Máximo" class="num">{{ x.texto_maximo }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if es_admin %}
+<section class="captura">
+  <h2>Cambiar una proporción de {{ p.nombre }}</h2>
+  <form method="post" action="{{ url_for('grupo4.proporcion') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="producto" value="{{ p.codigo }}">
+    <div class="campo campo--ancho">
+      <label for="concepto">Concepto</label>
+      <select id="concepto" name="concepto" required>
+        <option value="">Elige un concepto</option>
+        {% for x in p.proporciones %}
+        <option value="{{ x.concepto }}">{{ x.etiqueta }} (hoy {{ x.texto }}, máximo {{ x.texto_maximo }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="porcentaje">Porcentaje nuevo</label>
+      <input id="porcentaje" name="porcentaje" type="number" min="0" max="100" step="0.01" inputmode="decimal" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar proporción</button>
+  </form>
+  <p class="nota">Se escribe en porcentaje, de 0 a 100, con hasta 2 decimales (80 significa 80 %); la celda guarda 0.8. Si la suma con el otro producto pasa de 100 %, el robot lo rechaza. Si el costo unitario queda por encima del precio de referencia, se guarda y la pantalla lo avisa.</p>
+  <p class="nota">El cambio mueve el costo unitario de la hornada cargada y de las siguientes; las hornadas ya registradas conservan su costo. La proporción de panadero y ayudante también mueve la fila Planilla de gasto operacional, que resta lo que ya se cargó a producción.</p>
+</section>
+{% endif %}
+
 {% for s in p.secciones %}
 <h2 class="subtitulo">{{ s.titulo }}</h2>
 <table class="comandas">
@@ -127,8 +177,8 @@
 <details class="como">
   <summary>Cómo funciona esta pantalla</summary>
   <p>El costo de los materiales es la cantidad de la hornada por el costo de cada porción de la receta; ese costo sale de la tabla cruce maestra MP, que el robot actualiza con la API de catálogo del proveedor.</p>
-  <p>La mano de obra toma el sueldo de panadero y ayudante de la hoja planilla, y el agua y la electricidad toman el monto del mes de la hornada en la hoja gasto operacional. La parte que se carga a este producto es un dato fijo del modelo.</p>
+  <p>La mano de obra toma el sueldo de panadero y ayudante de la hoja planilla, y el agua y la electricidad toman el monto del mes de la hornada en la hoja gasto operacional. La parte que se carga a este producto la define la administración con el segundo formulario, que llama a la función <code>actualizar_proporcion</code> del robot.</p>
   <p>Como los costos del día se reparten entre las unidades horneadas, una hornada más grande baja el costo unitario. Por eso el precio de venta es el precio de referencia y no el precio calculado: producir más se ve como más utilidad.</p>
-  <p>El botón llama a la función <code>actualizar_precio_referencia</code> del robot, que escribe solo la celda del precio de referencia. Si el dato no se permite, el robot lo rechaza y no escribe nada.</p>
+  <p>El botón del precio llama a la función <code>actualizar_precio_referencia</code> del robot, que escribe solo la celda del precio de referencia. Si el dato no se permite, el robot lo rechaza y no escribe nada.</p>
 </details>
 {% endblock %}

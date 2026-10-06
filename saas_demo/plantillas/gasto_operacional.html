@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block titulo %}Gasto operacional{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Gasto operacional</h1>
+  <p class="encabezado__resumen">Los {{ leido.rubros|length }} rubros de gasto de la panadería, mes por mes. La administración digita {{ manuales|length }} de ellos; los otros {{ leido.rubros|length - manuales|length }} vienen de la hoja planilla y los calcula el Excel.</p>
+</div>
+
+{% if es_admin %}
+<section class="captura">
+  <h2>Monto de un rubro en un mes</h2>
+  <form method="post" action="{{ url_for('grupo4.guardar_gasto') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--ancho">
+      <label for="rubro">Rubro</label>
+      <select id="rubro" name="rubro" required>
+        <option value="">Elige un rubro</option>
+        {% for r in manuales %}
+        <option value="{{ r.rubro }}">{{ r.rubro }}{% if r.pago_unico %} (pago único al año){% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="mes">Mes</label>
+      <select id="mes" name="mes" required>
+        <option value="">Mes</option>
+        {% for numero, corto, largo in meses %}
+        <option value="{{ numero }}">{{ largo }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="monto">Monto del mes</label>
+      <input id="monto" name="monto" type="number" min="0" step="0.01" inputmode="decimal" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar monto</button>
+  </form>
+  <p class="nota">Se acepta de ₡0 en adelante, sin separador de miles. Cada mes es una celda aparte: el cambio de un mes no toca los demás. Patente y permiso sanitario son un pago único al año; si ya hay monto en otro mes, se guarda y la pantalla lo avisa.</p>
+  <p class="nota">El agua y la electricidad del mes de cada hornada entran en el costo unitario de Baguette y CupCake. El cambio queda en RegistroEventos con el valor anterior y el nuevo.</p>
+</section>
+{% else %}
+<p class="nota">El gasto operacional lo cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
+{% endif %}
+
+<h2 class="subtitulo">Gastos por mes</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Rubro</th>
+      <th scope="col">Quién lo escribe</th>
+      {% for numero, corto, largo in meses %}<th scope="col" class="num">{{ corto }}</th>{% endfor %}
+      <th scope="col" class="num">Año</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in leido.rubros %}
+    <tr>
+      <td data-titulo="Fila">{{ r.fila }}</td>
+      <td data-titulo="Rubro">{{ r.rubro }}</td>
+      <td data-titulo="Quién lo escribe">{% if r.manual %}<span class="sello sello--pendiente">Administración</span>{% else %}Fórmula (planilla){% endif %}</td>
+      {% for texto in r.meses_texto %}<td data-titulo="{{ meses[loop.index0][1] }}" class="num">{{ texto }}</td>{% endfor %}
+      <td data-titulo="Año" class="num"><strong>{{ r.anual_texto }}</strong></td>
+    </tr>
+    {% endfor %}
+    <tr>
+      <td data-titulo="Fila">{{ leido.total.fila }}</td>
+      <td data-titulo="Rubro"><strong>Total</strong></td>
+      <td data-titulo="Quién lo escribe">Fórmula</td>
+      {% for texto in leido.total.meses_texto %}<td data-titulo="{{ meses[loop.index0][1] }}" class="num"><strong>{{ texto }}</strong></td>{% endfor %}
+      <td data-titulo="Año" class="num"><strong>{{ leido.total.anual_texto }}</strong></td>
+    </tr>
+  </tbody>
+</table>
+<p class="nota">Hoja gasto operacional. La fila Planilla trae solo los sueldos administrativos: resta la parte de panadero y ayudante que las hojas de costo ya cargaron a producción.</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>El botón llama a la función <code>actualizar_gasto</code> del robot, que escribe solo la celda de ese rubro en ese mes. Los rubros que vienen de la planilla no están en la lista: el robot nunca escribe sobre una fórmula.</p>
+  <p>El total de cada mes pasa al flujo de caja anual.</p>
+</details>
+{% endblock %}

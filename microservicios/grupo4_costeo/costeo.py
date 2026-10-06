@@ -37,6 +37,18 @@ OPCIONAL origen. Si no se entrega, el evento dice "Robot Python" como siempre; e
 Funcion nueva de LECTURA para la pantalla del SaaS: leer_costeo(wb) devuelve las dos hojas de
 costo tal como las calculo el Excel (elementos del costo, costo unitario, precio de referencia
 y utilidad). No escribe nada.
+
+|| 5-oct-2026 (noche), DECISION DEL USUARIO: las proporciones que cada hoja de costo carga al
+producto (parte del sueldo de panadero y ayudante, parte del agua y de la electricidad) las define
+la administracion, porque pueden variar. Funcion nueva:
+  actualizar_proporcion(producto, concepto, porcentaje) -> 'costo pan baguette' B23, B24, B31, B32
+                                                          'costo cupcakes'     B23, B24, B30, B31
+Reglas (confirmadas por el usuario): cada proporcion va de 0 a 100 %; por cada concepto la suma de
+los dos productos no pasa de 100 % ('gasto operacional' fila 9 resta de la planilla lo que ya se
+cargo a produccion, m007); si el costo unitario queda por encima del precio de referencia se
+guarda con un AVISO (no se bloquea). La celda guarda la fraccion (80 % = 0.8).
+Lecturas nuevas para el SaaS: leer_planilla, leer_gastos y leer_activos. No escriben nada.
+    py -m microservicios.grupo4_costeo.costeo --local proporcion P01 panadero 75
 """
 import os
 import sys
@@ -46,7 +58,7 @@ if __name__ == "__main__" and "--local" in sys.argv:
     os.environ["ORIGEN_EXCEL"] = "local"
     os.environ.setdefault("EXCEL_LOCAL_PATH", "datos_prueba/maestro_prueba.xlsx")
 
-from conexion_drive.drive_excel import editar_excel      # noqa: E402
+from conexion_drive.drive_excel import editar_excel, leer_excel      # noqa: E402
 from conexion_drive.tablas import registrar_evento        # noqa: E402
 
 MODULO = "Costeo"
@@ -67,6 +79,22 @@ ORIGEN_ROBOT = "Robot Python"              # origen del evento cuando nadie entr
 # leer_costeo: la tabla "Elementos del costo" empieza debajo de la fila 9 en las dos hojas.
 FILA_ELEMENTOS = 9
 SECCIONES_COSTO = ("costo materiales directos", "costo mano de obra directa", "costo indirecto de fabricacion")
+
+# Proporciones que cada hoja de costo carga al producto (decision del usuario, 5-oct-2026).
+# La celda se comprueba por el TEXTO de la columna A de su fila antes de leerla o escribirla.
+PROPORCIONES = {
+    "ayudante": {"etiqueta": "Ayudante de panadero", "sobre": "del sueldo del mes", "debe_decir": ("ayudante",),
+                 "no_debe_decir": (), "celdas": {"P01": "B23", "Pa01": "B23"}},
+    "panadero": {"etiqueta": "Panadero", "sobre": "del sueldo del mes", "debe_decir": ("panadero",),
+                 "no_debe_decir": ("ayudante",), "celdas": {"P01": "B24", "Pa01": "B24"}},
+    "agua": {"etiqueta": "Servicio de agua", "sobre": "del recibo del mes", "debe_decir": ("agua",),
+             "no_debe_decir": (), "celdas": {"P01": "B31", "Pa01": "B30"}},
+    "electricidad": {"etiqueta": "Electricidad", "sobre": "del recibo del mes", "debe_decir": ("electr",),
+                     "no_debe_decir": (), "celdas": {"P01": "B32", "Pa01": "B31"}},
+}
+SINONIMOS_CONCEPTO = {"ayudante": "ayudante", "ayudante de panadero": "ayudante", "ayudante panadero": "ayudante",
+                      "panadero": "panadero", "agua": "agua", "servicio de agua": "agua",
+                      "electricidad": "electricidad", "luz": "electricidad", "servicio de electricidad": "electricidad"}
 SINONIMOS_PRODUCTO = {"p01": "P01", "baguette": "P01", "pan baguette": "P01",
                       "pa01": "Pa01", "cupcake": "Pa01", "cupcakes": "Pa01"}
 
@@ -153,7 +181,7 @@ def _mes(valor):
 # Motor comun: escribir celdas de entrada + evento con antes -> despues
 # ----------------------------------------------------------------------------
 def _aplicar(wb, hoja, cambios, tipo_evento, id_entidad, accion, avisos=(), valor_referencia="",
-             origen=ORIGEN_ROBOT):
+             origen=ORIGEN_ROBOT, nota=""):
     """cambios: {celda: valor_nuevo}. Escribe solo lo que cambia y registra el evento."""
     ws = wb[hoja]
     reales = []
@@ -173,6 +201,8 @@ def _aplicar(wb, hoja, cambios, tipo_evento, id_entidad, accion, avisos=(), valo
             raise CosteoInvalido(f"Verificacion fallo en '{hoja}'!{celda}")
 
     detalle = " ; ".join(f"'{hoja.strip()}'!{c}: {a!r} -> {n!r}" for c, a, n in reales)
+    if nota:
+        detalle += " | " + nota
     if avisos:
         detalle += " | AVISO: " + " | ".join(avisos)
     evento = registrar_evento(wb, modulo=MODULO, tipo_evento=tipo_evento, entidad=hoja.strip(),
@@ -235,7 +265,100 @@ def leer_costeo(wb):
             producto[dato] = _numero(ws[cfg[dato]].value)
             producto[f"celda_{dato}"] = cfg[dato]
         productos.append(producto)
+    # Proporciones que cada hoja carga al producto, con la del otro producto (la suma no pasa de 100 %).
+    for producto in productos:
+        otro = next(p for p in productos if p["codigo"] != producto["codigo"])
+        producto["proporciones"] = []
+        for concepto, definicion in PROPORCIONES.items():
+            celda = _celda_proporcion(wb, producto["codigo"], concepto, KeyError)
+            valor = _numero(wb[producto["hoja"]][celda].value)
+            valor_otro = _numero(wb[otro["hoja"]][_celda_proporcion(wb, otro["codigo"], concepto, KeyError)].value)
+            producto["proporciones"].append({
+                "concepto": concepto, "etiqueta": definicion["etiqueta"], "sobre": definicion["sobre"],
+                "celda": celda, "valor": valor, "otro_producto": otro["nombre"], "valor_otro": valor_otro,
+                "maximo": None if valor_otro is None else round(1 - valor_otro, 4)})
     return productos
+
+
+def _celda_proporcion(wb, codigo, concepto, error=None):
+    """La celda de una proporcion, comprobando que su fila sea la del concepto (texto de la columna A)."""
+    error = error or CosteoInvalido
+    definicion, hoja = PROPORCIONES[concepto], PRECIO_REFERENCIA[codigo]["hoja"]
+    celda = definicion["celdas"][codigo]
+    etiqueta = _clave(wb[hoja][f"A{celda[1:]}"].value)
+    if not all(palabra in etiqueta for palabra in definicion["debe_decir"]) \
+            or any(palabra in etiqueta for palabra in definicion["no_debe_decir"]):
+        raise error(f"'{hoja}'!A{celda[1:]} dice '{etiqueta}' y se esperaba la fila de {definicion['etiqueta']}: "
+                    "el mapa y el Excel no coinciden. No se escribio nada.")
+    return celda
+
+
+def leer_planilla(wb):
+    """La hoja 'planilla' (solo LECTURA; wb = libro de VALORES): plazas, filas libres y resumen por semestre."""
+    ws = wb[HOJA_PLANILLA]
+    filas_por_nombre = {fila: nombre for nombre, fila in (("Otros 1", 11), ("Otros 2", 12))}
+    plazas = []
+    for fila in range(min(PLAZAS_FIJAS.values()), FILAS_PLAZA_NUEVA[-1] + 1):
+        nombre = " ".join(str(ws[f"A{fila}"].value or "").split())
+        fija = fila not in FILAS_PLAZA_NUEVA
+        if not nombre and not fija:
+            continue
+        plazas.append({"fila": fila, "plaza": filas_por_nombre.get(fila, nombre), "fija": fija,
+                       "personas": _numero(ws[f"B{fila}"].value), "sueldo": _numero(ws[f"C{fila}"].value),
+                       "sueldo_total": _numero(ws[f"D{fila}"].value), "cargas": _numero(ws[f"E{fila}"].value),
+                       "aguinaldo": _numero(ws[f"F{fila}"].value), "costo_total": _numero(ws[f"G{fila}"].value)})
+    libres = sum(1 for fila in FILAS_PLAZA_NUEVA
+                 if all(ws[f"{columna}{fila}"].value in (None, "") for columna in "ABC"))
+    resumen = [{"fila": fila, "concepto": " ".join(str(ws[f"J{fila}"].value or "").split()),
+                "personas": _numero(ws[f"K{fila}"].value), "sueldo_total": _numero(ws[f"M{fila}"].value),
+                "cargas": _numero(ws[f"N{fila}"].value), "aguinaldo": _numero(ws[f"O{fila}"].value),
+                "costo_total": _numero(ws[f"P{fila}"].value), "riesgo": _numero(ws[f"Q{fila}"].value)}
+               for fila in (14, 15)]
+    return {"plazas": plazas, "libres": libres, "resumen": resumen}
+
+
+def leer_gastos(wb):
+    """La hoja 'gasto operacional' (solo LECTURA): los 13 rubros por mes, cuales son manuales y los totales."""
+    ws = wb[HOJA_GASTOS]
+    manuales = set(RUBROS_GASTO.values())
+    rubros = [{"fila": fila, "rubro": " ".join(str(ws[f"A{fila}"].value or "").split()), "manual": fila in manuales,
+               "pago_unico": fila in RUBROS_PAGO_UNICO,
+               "meses": [_numero(ws[f"{columna}{fila}"].value) for columna in COLUMNAS_MES],
+               "anual": _numero(ws[f"N{fila}"].value)}
+              for fila in range(min(manuales), max(manuales) + 1)]
+    fila_total = max(manuales) + 1
+    if _clave(ws[f"A{fila_total}"].value) != "total":
+        raise KeyError(f"'{HOJA_GASTOS}'!A{fila_total} no dice 'Total': el mapa y el Excel no coinciden.")
+    total = {"fila": fila_total, "meses": [_numero(ws[f"{columna}{fila_total}"].value) for columna in COLUMNAS_MES],
+             "anual": _numero(ws[f"N{fila_total}"].value)}
+    return {"rubros": rubros, "total": total, "meses": list(MESES)}
+
+
+def leer_activos(wb):
+    """La hoja 'valor activos ' (solo LECTURA): los activos con nombre, las filas de reserva libres y los totales."""
+    ws = wb[HOJA_ACTIVOS]
+    activos = []
+    for fila in FILAS_ACTIVOS:
+        nombre = " ".join(str(ws[f"A{fila}"].value or "").split())
+        if nombre:
+            activos.append({"fila": fila, "activo": nombre, "cantidad": _numero(ws[f"B{fila}"].value),
+                            "precio": _numero(ws[f"C{fila}"].value), "costo": _numero(ws[f"D{fila}"].value),
+                            "vida_util": _numero(ws[f"E{fila}"].value), "depreciacion_anual": _numero(ws[f"F{fila}"].value),
+                            "depreciacion_mensual": _numero(ws[f"G{fila}"].value), "valor_12_meses": _numero(ws[f"H{fila}"].value)})
+    libres = sum(1 for fila in FILAS_RESERVA if all(ws[f"{columna}{fila}"].value in (None, "") for columna in "ABCE"))
+    totales = {}
+    for fila in range(FILAS_ACTIVOS[-1] + 1, FILAS_ACTIVOS[-1] + 8):       # los totales viven debajo de la tabla
+        etiqueta = _clave(ws[f"A{fila}"].value)
+        if etiqueta.startswith("total depreciacion"):
+            totales.update(depreciacion_anual=_numero(ws[f"F{fila}"].value), celda_depreciacion_anual=f"F{fila}",
+                           depreciacion_mensual=_numero(ws[f"G{fila}"].value), celda_depreciacion_mensual=f"G{fila}")
+        elif etiqueta.startswith("valor rescate"):
+            totales.update(valor_12_meses=_numero(ws[f"H{fila}"].value), celda_valor_12_meses=f"H{fila}")
+        elif etiqueta.startswith("total activos"):
+            totales.update(total_activos=_numero(ws[f"D{fila}"].value), celda_total_activos=f"D{fila}")
+    if "total_activos" not in totales:
+        raise KeyError(f"'{HOJA_ACTIVOS.strip()}': no encontre la fila 'Total activos' debajo de la tabla.")
+    return {"activos": activos, "libres": libres, "totales": totales}
 
 
 # ----------------------------------------------------------------------------
@@ -272,6 +395,82 @@ def actualizar_precio_referencia(producto, precio, origen=ORIGEN_ROBOT):
         return resultado
 
     return editar_excel(_editar, descripcion=f"Precio de referencia {codigo}")
+
+
+# ----------------------------------------------------------------------------
+# 1b) Proporciones que la hoja de costo carga al producto (decision del usuario, 5-oct-2026)
+# ----------------------------------------------------------------------------
+def _porcentaje(valor):
+    """'75', '75 %' o '12,5' -> 75 / 12.5. De 0 a 100, con hasta 2 decimales."""
+    if isinstance(valor, bool):
+        raise CosteoInvalido(f"Proporcion: {valor!r} no es un numero.")
+    try:
+        numero = float(str(valor).replace("%", "").replace(",", ".").strip())
+    except (TypeError, ValueError):
+        raise CosteoInvalido(f"Proporcion: {valor!r} no es un numero. Se escribe en porcentaje, de 0 a 100.") from None
+    if not 0 <= numero <= 100:
+        raise CosteoInvalido(f"La proporcion va de 0 a 100 % (llego {valor!r}).")
+    if round(numero, 2) != numero:
+        raise CosteoInvalido(f"La proporcion acepta hasta 2 decimales (llego {valor!r}).")
+    return int(numero) if numero == int(numero) else numero
+
+
+def actualizar_proporcion(producto, concepto, porcentaje, origen=ORIGEN_ROBOT):
+    """Parte de un sueldo o de un recibo del mes que la hoja de costo carga a P01 (Baguette) o Pa01 (CupCake).
+
+    concepto: 'panadero', 'ayudante', 'agua' o 'electricidad'. porcentaje: de 0 a 100 (la celda guarda 0.8 para 80 %).
+    Rechaza si la suma con la proporcion del otro producto pasa de 100 %. Si despues del recalculo el costo
+    unitario queda por encima del precio de referencia, se guarda igual y el resultado trae un AVISO.
+    """
+    codigo = SINONIMOS_PRODUCTO.get(_clave(producto))
+    if not codigo:
+        raise CosteoInvalido(f"'{producto}' no es un producto de produccion propia (use P01 o Pa01).")
+    clave = SINONIMOS_CONCEPTO.get(_clave(concepto))
+    if not clave:
+        raise CosteoInvalido(f"'{concepto}' no es una proporcion de la hoja de costo. Use: panadero, ayudante, "
+                             "agua o electricidad.")
+    porcentaje = _porcentaje(porcentaje)
+    fraccion = round(porcentaje / 100, 4)
+    cfg, definicion = PRECIO_REFERENCIA[codigo], PROPORCIONES[clave]
+    codigo_otro = next(c for c in PRECIO_REFERENCIA if c != codigo)
+    cfg_otro = PRECIO_REFERENCIA[codigo_otro]
+
+    def _editar(wb, wb_valores):
+        celda = _celda_proporcion(wb, codigo, clave)
+        valor_otro = _numero(wb[cfg_otro["hoja"]][_celda_proporcion(wb, codigo_otro, clave)].value)
+        if valor_otro is None:
+            raise CosteoInvalido(f"La proporcion de {definicion['etiqueta']} en '{cfg_otro['hoja']}' no es un numero: "
+                                 "no se puede comprobar la suma. No se escribio nada.")
+        if fraccion + valor_otro > 1 + 1e-9:
+            raise CosteoInvalido(
+                f"RECHAZADO: {definicion['etiqueta']}: {porcentaje:g} % en {cfg['nombre']} mas {valor_otro * 100:g} % en "
+                f"{cfg_otro['nombre']} suman {porcentaje + valor_otro * 100:g} %, mas del 100 %. "
+                f"Lo maximo para {cfg['nombre']} es {(1 - valor_otro) * 100:g} %.")
+        anterior = _numero(wb[cfg["hoja"]][celda].value)
+        nota = (f"{definicion['etiqueta']} en {cfg['nombre']}: "
+                f"{'sin dato' if anterior is None else f'{anterior * 100:g} %'} -> {porcentaje:g} % {definicion['sobre']} "
+                f"({cfg_otro['nombre']}: {valor_otro * 100:g} %)")
+        resultado = _aplicar(wb, cfg["hoja"], {celda: fraccion}, "CONFIG_PROPORCION_COSTO", f"{codigo} / {clave}",
+                             "UPDATE", valor_referencia=porcentaje, origen=origen, nota=nota)
+        costo_antes = wb_valores[cfg["hoja"]][cfg["costo"]].value
+        resultado.update(codigo=codigo, producto=cfg["nombre"], concepto=clave, etiqueta=definicion["etiqueta"],
+                         celda=celda, porcentaje=porcentaje,
+                         porcentaje_antes=None if anterior is None else round(anterior * 100, 2),
+                         otro_producto=cfg_otro["nombre"], porcentaje_otro=round(valor_otro * 100, 2),
+                         costo_unitario_antes=_numero(costo_antes))
+        return resultado
+
+    resultado = editar_excel(_editar, descripcion=f"Proporcion {clave} {codigo}")
+    if resultado.get("hubo_cambios"):
+        # El costo nuevo lo calcula el Excel: se lee despues del recalculo (no se repite la formula aqui).
+        hoja_v = leer_excel()[cfg["hoja"]]
+        costo, precio = _numero(hoja_v[cfg["costo"]].value), _numero(hoja_v[cfg["precio"]].value)
+        resultado.update(costo_unitario=costo, precio_referencia=precio)
+        if costo is not None and precio is not None and round(costo, 2) > round(precio, 2):
+            resultado["avisos"].append(
+                f"Con esta proporcion el costo unitario de {cfg['nombre']} (₡{costo:,.2f}) queda por encima de su "
+                f"precio de referencia (₡{precio:,.2f}). Se guardo igual: revise el precio de referencia.")
+    return resultado
 
 
 # ----------------------------------------------------------------------------
@@ -449,6 +648,7 @@ def _main(argv):
     p.add_argument("--local", action="store_true", help="usar la copia datos_prueba")
     sub = p.add_subparsers(dest="accion", required=True)
     s = sub.add_parser("precio"); s.add_argument("producto"); s.add_argument("precio")
+    s = sub.add_parser("proporcion"); s.add_argument("producto"); s.add_argument("concepto"); s.add_argument("porcentaje")
     s = sub.add_parser("plaza"); s.add_argument("plaza"); s.add_argument("--personas"); s.add_argument("--sueldo")
     s = sub.add_parser("nueva-plaza"); s.add_argument("nombre"); s.add_argument("personas"); s.add_argument("sueldo")
     s = sub.add_parser("gasto"); s.add_argument("rubro"); s.add_argument("mes"); s.add_argument("monto")
@@ -462,6 +662,8 @@ def _main(argv):
     print(f"Excel de destino: {'COPIA LOCAL ' + str(config.EXCEL_LOCAL_PATH) if config.ORIGEN_EXCEL == 'local' else 'GOOGLE DRIVE (real)'}")
     if a.accion == "precio":
         return actualizar_precio_referencia(a.producto, a.precio)
+    if a.accion == "proporcion":
+        return actualizar_proporcion(a.producto, a.concepto, a.porcentaje)
     if a.accion == "plaza":
         return actualizar_plaza(a.plaza, a.personas, a.sueldo)
     if a.accion == "nueva-plaza":

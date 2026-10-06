@@ -65,8 +65,12 @@ MENU = [
         ("Tabla combos dinámicos", "grupo3.combos", False),
     ]),
     ("4 Costeo", [
-        ("Costo pan baguette", "grupo4.costo_baguette", False),
-        ("Costo cupcakes", "grupo4.costo_cupcakes", False),
+        # Decision del usuario (5-oct-2026, noche): las hojas de costo y la planilla las ve solo administracion.
+        ("Costo pan baguette", "grupo4.costo_baguette", True),
+        ("Costo cupcakes", "grupo4.costo_cupcakes", True),
+        ("Planilla", "grupo4.planilla", True),
+        ("Gasto operacional", "grupo4.gasto_operacional", True),       # tambien solo administracion (misma decision)
+        ("Valor activos", "grupo4.valor_activos", False),
     ]),
 ]
 _intentos = {}          # direccion -> [fallos, bloqueado_hasta]
@@ -317,7 +321,7 @@ def anular(id_pedido):
 from .grupo1 import grupo1          # noqa: E402  Ventas despacho, descuento general, Ingreso de Inventario
 from .grupo2 import grupo2          # noqa: E402  Control de Inventario (existencia minima, #63) y Hornadas
 from .grupo3 import grupo3          # noqa: E402  NODO INTEGRAL (#64), tablas cruce maestras (lectura) y combos (#65)
-from .grupo4 import grupo4          # noqa: E402  Hojas de costo (lectura) y precio de referencia (Regla #9)
+from .grupo4 import grupo4          # noqa: E402  Hojas de costo, planilla, gasto operacional y valor activos
 
 app.register_blueprint(grupo1)
 app.register_blueprint(grupo2)

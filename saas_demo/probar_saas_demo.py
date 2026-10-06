@@ -34,12 +34,19 @@ Que revisa:
      (un producto de produccion propia y uno de reventa, cantidad entera de 1 a 10); el robot congela
      lo ya rebajado del inventario y reescribe el precio, el detalle y el mensaje; evento con lo
      anterior y lo nuevo.
-  P) Hojas de costo (Grupo 4): 'costo pan baguette' y 'costo cupcakes' las ven los dos usuarios (elementos
+  || 5-oct-2026 (noche), decision del usuario: las hojas de costo y la planilla las ve SOLO administracion
+     (despacho recibe 403 y su menu no las ofrece); gasto operacional tambien es solo para administracion;
+     valor activos sigue como lectura para los dos usuarios.
+  P) Hojas de costo (Grupo 4): 'costo pan baguette' y 'costo cupcakes' las ve solo administracion (elementos
      del costo, costo unitario, precio de referencia y utilidad); el precio de referencia (G28 / G27, Regla #9)
      lo cambia solo administracion; bajo el costo unitario lo bloquea el robot; la tabla cruce maestra y los
      combos leen el precio nuevo; evento con valor anterior y nuevo. Nota de C8 en NODO INTEGRAL (#96).
      El cambio se prueba con el producto que tenga el costo unitario por debajo de su precio (la seccion K
      deja una hornada de 10 Baguette, y con tan pocas unidades el costo unitario supera al precio).
+  Q) Grupo 4, paquete 2: proporciones de las hojas de costo (parte de sueldos, agua y electricidad que se
+     carga a cada producto: de 0 a 100 %, la suma de los dos productos no pasa de 100 %, aviso si el costo
+     queda sobre el precio), Planilla, Gasto operacional y Valor activos: lectura para los dos usuarios,
+     cambios solo administracion; evento con valor anterior y nuevo y origen SaaS.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
@@ -49,6 +56,7 @@ Escribe 13 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca
 || 5-oct-2026: se agrego N (combos, Grupo 3b), con 4 escrituras mas: ahora son 21 y tarda cerca de 4.5 minutos.
 || 5-oct-2026 (tarde): se agrego O (composicion de los combos), con 3 escrituras mas: ahora son 24 y tarda cerca de 5 minutos.
 || 5-oct-2026 (noche): se agrego P (hojas de costo, Grupo 4), con 2 escrituras mas: ahora son 26 y tarda cerca de 6.5 minutos.
+|| 5-oct-2026 (noche): se agrego Q (Grupo 4, paquete 2), con 8 escrituras mas: ahora son 34 y tarda cerca de 8 minutos.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
@@ -870,19 +878,25 @@ def main():
     for ruta, codigo in pantallas_costo:
         hoja_costo = costeo_de(codigo)
         elementos = [f["elemento"] for s in hoja_costo["secciones"] for f in s["filas"]]
-        pagina = despacho.get(f"{ruta}?actualizar=1")
+        pagina = admin.get(f"{ruta}?actualizar=1")
         texto = html.unescape(pagina.get_data(as_text=True))
         revisar(pagina.status_code == 200 and all(e in texto for e in elementos)
                 and f"₡{hoja_costo['costo_unitario']:,.2f}" in texto and f"₡{hoja_costo['precio_referencia']:,.2f}" in texto,
-                f"despacho ve '{hoja_costo['hoja']}': {len(elementos)} elementos del costo, costo unitario "
+                f"administracion ve '{hoja_costo['hoja']}': {len(elementos)} elementos del costo, costo unitario "
                 f"{hoja_costo['costo_unitario']:,.2f} y precio de referencia {hoja_costo['precio_referencia']:,.2f}")
-        revisar(b"data-escribe" not in pagina.data and b'name="precio"' not in pagina.data,
-                f"'{hoja_costo['hoja']}' (despacho): sin formulario, es solo lectura")
-        pagina = admin.get(ruta)
+        respuesta = despacho.get(ruta)
+        revisar(respuesta.status_code == 403 and elementos[0] not in html.unescape(respuesta.get_data(as_text=True)),
+                f"'{hoja_costo['hoja']}': despacho no la ve (el servidor responde 403); es solo para administracion")
         revisar(pagina.data.count(b'name="precio"') == 1 and "Guardar precio de referencia".encode() in pagina.data
                 and f"celda {hoja_costo['celda_precio']}".encode() in pagina.data,
                 f"administracion ve el formulario del precio de referencia (celda {hoja_costo['celda_precio']})")
-    revisar(b"4 Costeo" in despacho.get("/costo-pan-baguette").data, "el menu muestra el grupo '4 Costeo'")
+    menu_despacho = despacho.get("/ventas-despacho").data
+    revisar(b"4 Costeo" in admin.get("/costo-pan-baguette").data and b"/costo-pan-baguette" in admin.get("/ventas-despacho").data
+            and b"/costo-pan-baguette" not in menu_despacho and b"/costo-cupcakes" not in menu_despacho
+            and b"/planilla" not in menu_despacho and b"/gasto-operacional" not in menu_despacho
+            and b"/valor-activos" in menu_despacho,
+            "el menu de administracion muestra '4 Costeo' completo; el de despacho solo ofrece Valor activos (ni hojas de costo, "
+            "ni planilla, ni gasto operacional)")
 
     # El cambio se prueba con un producto cuyo costo unitario este por debajo de su precio de referencia.
     # (La seccion K deja cargada una hornada de 10 Baguette: con tan pocas unidades su costo unitario
@@ -944,8 +958,8 @@ def main():
     guardar_precio(admin, ficha_admin, codigo_p, f"{precio_nuevo:.2f}")
     revisar(huella(COPIA_TEMPORAL) == huella_antes and "ya era".encode() in admin.get(ruta_p).data,
             "el mismo precio otra vez: SIN_CAMBIO, no se escribe nada")
-    texto = html.unescape(despacho.get(f"{ruta_p}?actualizar=1").get_data(as_text=True))
-    revisar(f"₡{precio_nuevo:,.2f}" in texto, "despacho ve el precio de referencia nuevo en la pantalla")
+    texto = html.unescape(admin.get(f"{ruta_p}?actualizar=1").get_data(as_text=True))
+    revisar(f"₡{precio_nuevo:,.2f}" in texto, "la pantalla, leida de nuevo, muestra el precio de referencia nuevo")
     guardar_precio(admin, ficha_admin, codigo_p, f"{precio_inicio:.2f}")
     final = costeo_de(codigo_p)
     revisar(final["precio_referencia"] == precio_inicio and precio_tcm(codigo_p) == round(precio_inicio, 2)
@@ -954,6 +968,167 @@ def main():
     texto = html.unescape(admin.get("/nodo-integral").get_data(as_text=True))
     revisar("Es una prevista" in texto and "todavía no hay ninguna campaña" in texto,
             "NODO INTEGRAL: la nota de C8 'Accion Meta Ads' dice que es una prevista (#96)")
+
+    # ------------------------------------------------------------------ Q
+    paso("Q) Proporciones de costo, Planilla, Gasto operacional y Valor activos: lectura para todos; cambios solo administracion")
+
+    def texto_de(cliente, ruta):
+        return html.unescape(cliente.get(ruta).get_data(as_text=True))
+
+    def enviar(cliente, ficha, ruta, **campos):
+        return cliente.post(ruta, data={**campos, "ficha": ficha})
+
+    def gasto_de(rubro, mes):
+        return next(r for r in cs.leer_gastos(leer_excel())["rubros"] if r["rubro"].lower().startswith(rubro.lower()))["meses"][mes - 1] or 0
+
+    def plaza_de(nombre):
+        return next((f for f in cs.leer_planilla(leer_excel())["plazas"] if f["plaza"] == nombre), None)
+
+    def evento_es(tipo, entidad):
+        evento = ultimo_evento()
+        return (evento.get("TIPO_EVENTO") == tipo and evento.get("ORIGEN") == "SaaS (administracion)"
+                and entidad in str(evento.get("ID_ENTIDAD")) and "->" in str(evento.get("DETALLE"))), evento
+
+    libro_q = leer_excel()
+    leido_pl, leido_go, leido_va = cs.leer_planilla(libro_q), cs.leer_gastos(libro_q), cs.leer_activos(libro_q)
+    for ruta, nombres, formularios, solo_admin in (("/planilla", [f["plaza"] for f in leido_pl["plazas"]], 2, True),
+                                                   ("/gasto-operacional", [r["rubro"] for r in leido_go["rubros"]], 1, True),
+                                                   ("/valor-activos", [a["activo"] for a in leido_va["activos"]], 2, False)):
+        pagina = despacho.get(f"{ruta}?actualizar=1")
+        texto = html.unescape(pagina.get_data(as_text=True))
+        if solo_admin:
+            revisar(pagina.status_code == 403 and nombres[0] not in texto,
+                    f"despacho no ve {ruta} (el servidor responde 403): es solo para administracion")
+        else:
+            revisar(pagina.status_code == 200 and all(n in texto for n in nombres) and b"data-escribe" not in pagina.data,
+                    f"despacho ve {ruta} ({len(nombres)} filas) y no ve formularios")
+        pagina = admin.get(f"{ruta}?actualizar=1")
+        revisar(pagina.data.count(b"data-escribe") == formularios
+                and all(n in html.unescape(pagina.get_data(as_text=True)) for n in nombres),
+                f"administracion ve {ruta} ({len(nombres)} filas) con {formularios} formulario(s)")
+    pagina = admin.get("/costo-pan-baguette")
+    revisar("Proporción que se carga".encode() in pagina.data and pagina.data.count(b"data-escribe") == 2
+            and despacho.get("/costo-pan-baguette").status_code == 403,
+            "hoja de costo: administracion ve las proporciones y dos formularios (precio y proporcion); despacho no la ve")
+    huella_antes = huella(COPIA_TEMPORAL)
+    codigos = [enviar(despacho, ficha_despacho, ruta, **campos).status_code for ruta, campos in (
+        ("/costo/proporcion", {"producto": "P01", "concepto": "agua", "porcentaje": "50"}),
+        ("/planilla/plaza", {"plaza": "Panadero", "sueldo": "1"}),
+        ("/planilla/nueva", {"nombre": "Intruso", "personas": "1", "sueldo": "1"}),
+        ("/gasto-operacional/guardar", {"rubro": "Internet", "mes": "1", "monto": "1"}),
+        ("/valor-activos/activo", {"activo": leido_va["activos"][0]["activo"], "cantidad": "0"}),
+        ("/valor-activos/nuevo", {"nombre": "Intruso", "cantidad": "1", "precio": "1", "vida_util": "1"}))]
+    revisar(codigos == [403] * 6 and huella(COPIA_TEMPORAL) == huella_antes,
+            "despacho no puede cambiar nada del Grupo 4: las 6 escrituras responden 403 y el Excel no cambia")
+
+    # --- Proporciones
+    hoja_b = costeo_de("P01")
+    agua = next(x for x in hoja_b["proporciones"] if x["concepto"] == "agua")
+    for concepto, porcentaje in (("agua", f"{agua['maximo'] * 100 + 5:g}"), ("agua", "101"), ("agua", "-1"), ("agua", "abc"),
+                                 ("harina", "50")):
+        enviar(admin, ficha_admin, "/costo/proporcion", producto="P01", concepto=concepto, porcentaje=porcentaje)
+    pagina = admin.get("/costo-pan-baguette")
+    revisar(b"RECHAZADO" in pagina.data and "mas del 100 %".encode() in pagina.data and huella(COPIA_TEMPORAL) == huella_antes,
+            f"agua en Baguette: {agua['maximo'] * 100 + 5:g} % (con el {agua['valor_otro'] * 100:g} % de {agua['otro_producto']} pasa de "
+            "100 %), 101, negativo, texto y un concepto que no existe: rechazados, no se escribe nada")
+    agua_nueva = round(agua["valor"] * 100 - 10, 2)
+    enviar(admin, ficha_admin, "/costo/proporcion", producto="P01", concepto="agua", porcentaje=f"{agua_nueva:g}")
+    texto = texto_de(admin, "/costo-pan-baguette")
+    hoja_d = costeo_de("P01")
+    agua_d = next(x for x in hoja_d["proporciones"] if x["concepto"] == "agua")
+    revisar(agua_d["valor"] == round(agua_nueva / 100, 4) and hoja_d["costo_unitario"] < hoja_b["costo_unitario"]
+            and "Guardado en el Excel en" in texto,
+            f"agua en Baguette {agua['valor'] * 100:g} % -> {agua_nueva:g} % (celda {agua['celda']} = {agua_d['valor']}); costo unitario "
+            f"{hoja_b['costo_unitario']:,.2f} -> {hoja_d['costo_unitario']:,.2f}; la pantalla muestra el aviso con el tiempo")
+    sobre_el_precio = round(hoja_d["costo_unitario"], 2) > round(hoja_d["precio_referencia"], 2)
+    revisar(("queda por encima" in texto) == sobre_el_precio,
+            "el costo unitario " + ("queda sobre el precio de referencia: se guardo y la pantalla lo avisa" if sobre_el_precio
+                                    else "sigue bajo el precio de referencia: no hay aviso"))
+    ok, evento = evento_es("CONFIG_PROPORCION_COSTO", "P01 / agua")
+    revisar(ok, f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    panadero = next(x for x in costeo_de("Pa01")["proporciones"] if x["concepto"] == "panadero")
+    planilla_antes, sueldo_panadero = gasto_de("Planilla", 1), plaza_de("Panadero")["sueldo_total"]
+    panadero_nuevo = round(panadero["valor"] * 100 - 5, 2)
+    enviar(admin, ficha_admin, "/costo/proporcion", producto="Pa01", concepto="panadero", porcentaje=f"{panadero_nuevo:g}")
+    revisar(round(gasto_de("Planilla", 1) - planilla_antes, 2) == round(0.05 * sueldo_panadero, 2),
+            f"panadero en CupCake {panadero['valor'] * 100:g} % -> {panadero_nuevo:g} %: la fila Planilla de 'gasto operacional' sube "
+            f"{0.05 * sueldo_panadero:,.2f} (lo que deja de cargarse a produccion pasa a gasto administrativo)")
+
+    # --- Planilla
+    huella_antes = huella(COPIA_TEMPORAL)
+    for campos in ({"plaza": "Otros", "personas": "1"}, {"plaza": "Panadero", "sueldo": "-5"}, {"plaza": "Gerente de zona", "personas": "1"},
+                   {"plaza": "Panadero"}):
+        enviar(admin, ficha_admin, "/planilla/plaza", **campos)
+    enviar(admin, ficha_admin, "/planilla/nueva", nombre="Panadero", personas="1", sueldo="1")
+    revisar("El robot no lo permitió" in texto_de(admin, "/planilla") and huella(COPIA_TEMPORAL) == huella_antes,
+            "planilla: 'Otros' sin numero, sueldo negativo, plaza que no existe, nada que cambiar y una plaza nueva con nombre de "
+            "plaza fija: rechazados, no se escribe nada")
+    planilla_antes, despacho_antes = gasto_de("Planilla", 1), plaza_de("Despacho")
+    enviar(admin, ficha_admin, "/planilla/plaza", plaza="Despacho", personas="1", sueldo="300000")
+    texto = texto_de(admin, "/planilla")
+    despacho_ahora = plaza_de("Despacho")
+    revisar(despacho_ahora["personas"] == 1 and despacho_ahora["sueldo"] == 300000 and despacho_ahora["sueldo_total"] == 300000
+            and round(gasto_de("Planilla", 1) - planilla_antes, 2) == round(300000 - (despacho_antes["sueldo_total"] or 0), 2)
+            and "Guardado en el Excel en" in texto,
+            f"plaza Despacho (fila {despacho_ahora['fila']}): 1 persona con sueldo 300,000; el Excel calculo el sueldo total y la fila "
+            "Planilla de 'gasto operacional' sube lo mismo")
+    ok, evento = evento_es("CONFIG_PLANILLA", "Despacho")
+    revisar(ok, f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    enviar(admin, ficha_admin, "/planilla/nueva", nombre="Repartidor de prueba", personas="1", sueldo="280000")
+    nueva = plaza_de("Repartidor de prueba")
+    huella_antes = huella(COPIA_TEMPORAL)
+    enviar(admin, ficha_admin, "/planilla/nueva", nombre="Repartidor de prueba", personas="1", sueldo="280000")
+    revisar(nueva is not None and not nueva["fija"] and nueva["sueldo_total"] == 280000 and "Agregada" in texto_de(admin, "/planilla")
+            and huella(COPIA_TEMPORAL) == huella_antes,
+            f"plaza nueva 'Repartidor de prueba' en la fila {nueva['fila'] if nueva else '?'}, con sus formulas; repetida: rechazada")
+
+    # --- Gasto operacional
+    huella_antes = huella(COPIA_TEMPORAL)
+    for campos in ({"rubro": "Planilla", "mes": "1", "monto": "5"}, {"rubro": "Internet", "mes": "13", "monto": "5"},
+                   {"rubro": "Internet", "mes": "1", "monto": "-1"}, {"rubro": "Viaticos", "mes": "1", "monto": "5"}):
+        enviar(admin, ficha_admin, "/gasto-operacional/guardar", **campos)
+    revisar("El robot no lo permitió" in texto_de(admin, "/gasto-operacional") and huella(COPIA_TEMPORAL) == huella_antes,
+            "gasto operacional: un rubro que es formula (Planilla), mes 13, monto negativo y un rubro que no existe: rechazados")
+    internet_antes = gasto_de("Internet", 3)
+    total_antes = cs.leer_gastos(leer_excel())["total"]["meses"][2]
+    enviar(admin, ficha_admin, "/gasto-operacional/guardar", rubro="Internet", mes="3", monto=f"{internet_antes + 1000:g}")
+    texto = texto_de(admin, "/gasto-operacional")
+    revisar(gasto_de("Internet", 3) == internet_antes + 1000 and gasto_de("Internet", 2) == gasto_de("Internet", 4)
+            and round(cs.leer_gastos(leer_excel())["total"]["meses"][2] - total_antes, 2) == 1000 and "Guardado en el Excel en" in texto,
+            f"Internet de marzo {internet_antes:,.2f} -> {internet_antes + 1000:,.2f}: solo cambia ese mes y el total de marzo sube 1,000")
+    ok, evento = evento_es("CONFIG_GASTO_OPERACIONAL", "marzo")
+    revisar(ok, f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    patente = next(r for r in cs.leer_gastos(leer_excel())["rubros"] if r["pago_unico"])
+    mes_libre = next(i for i, valor in enumerate(patente["meses"], 1) if not valor)
+    enviar(admin, ficha_admin, "/gasto-operacional/guardar", rubro=patente["rubro"], mes=str(mes_libre), monto="50000")
+    revisar("pago unico al año" in texto_de(admin, "/gasto-operacional") and gasto_de(patente["rubro"], mes_libre) == 50000,
+            f"{patente['rubro']} en un segundo mes ({mes_libre}): se guarda y la pantalla muestra el aviso de pago unico")
+
+    # --- Valor activos
+    huella_antes = huella(COPIA_TEMPORAL)
+    enviar(admin, ficha_admin, "/valor-activos/activo", activo="Nave espacial", cantidad="1")
+    enviar(admin, ficha_admin, "/valor-activos/activo", activo=leido_va["activos"][0]["activo"], vida_util="0")
+    enviar(admin, ficha_admin, "/valor-activos/nuevo", nombre=leido_va["activos"][0]["activo"], cantidad="1", precio="1", vida_util="1")
+    revisar("El robot no lo permitió" in texto_de(admin, "/valor-activos") and huella(COPIA_TEMPORAL) == huella_antes,
+            "valor activos: un activo que no existe, vida util 0 y un activo nuevo con nombre repetido: rechazados")
+    total_activos = leido_va["totales"]["total_activos"]
+    enviar(admin, ficha_admin, "/valor-activos/nuevo", nombre="Vitrina de prueba", cantidad="2", precio="150000", vida_util="5")
+    texto = texto_de(admin, "/valor-activos")
+    ahora_va = cs.leer_activos(leer_excel())
+    vitrina = next((a for a in ahora_va["activos"] if a["activo"] == "Vitrina de prueba"), None)
+    revisar(vitrina is not None and vitrina["costo"] == 300000 and vitrina["depreciacion_anual"] == 60000
+            and ahora_va["totales"]["total_activos"] == total_activos + 300000 and ahora_va["libres"] == leido_va["libres"] - 1
+            and "Guardado en el Excel en" in texto,
+            f"activo nuevo 'Vitrina de prueba' (2 x 150,000, 5 años) en la fila {vitrina['fila'] if vitrina else '?'}: costo 300,000, "
+            f"depreciacion anual 60,000; total de activos {total_activos:,.2f} -> {ahora_va['totales']['total_activos']:,.2f}")
+    ok, evento = evento_es("CONFIG_ACTIVO", "Vitrina de prueba")
+    revisar(ok, f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    enviar(admin, ficha_admin, "/valor-activos/activo", activo="Vitrina de prueba", cantidad="0")
+    texto = texto_de(admin, "/valor-activos")
+    revisar(cs.leer_activos(leer_excel())["totales"]["total_activos"] == total_activos and "De baja" in texto,
+            "dar de baja la vitrina (cantidad 0): la fila se conserva, la pantalla dice De baja y el total de activos vuelve a su valor")
+    ws_fcp = leer_excel()["flujo caja proyecto"]
+    revisar(ws_fcp["D23"].value == total_activos, "'flujo caja proyecto'!D23 lee el total de activos")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")

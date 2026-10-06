@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block titulo %}Planilla{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Planilla</h1>
+  <p class="encabezado__resumen">Las plazas de la panadería con su número de personas y su sueldo mensual. Eso es lo único que se digita: el sueldo total, las cargas sociales y el aguinaldo los calcula el Excel. Quedan {{ leido.libres }} filas libres para plazas nuevas.</p>
+</div>
+
+{% if es_admin %}
+<section class="captura">
+  <h2>Cambiar una plaza</h2>
+  <form method="post" action="{{ url_for('grupo4.cambiar_plaza') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--ancho">
+      <label for="plaza">Plaza</label>
+      <select id="plaza" name="plaza" required>
+        <option value="">Elige una plaza</option>
+        {% for f in leido.plazas %}
+        <option value="{{ f.plaza }}">{{ f.plaza }} (fila {{ f.fila }}: {{ f.personas_texto or '0' }} personas, sueldo {{ f.sueldo_texto or 'sin dato' }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo campo--corto">
+      <label for="personas">Personas</label>
+      <input id="personas" name="personas" type="number" min="0" max="99" step="1" inputmode="numeric">
+    </div>
+    <div class="campo campo--corto">
+      <label for="sueldo">Sueldo mensual</label>
+      <input id="sueldo" name="sueldo" type="number" min="0" step="0.01" inputmode="decimal">
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar plaza</button>
+  </form>
+  <p class="nota">Deja vacío el dato que no cambia. El nombre de las plazas fijas no se cambia. Se guarda en la hoja planilla, columnas B y C, y el cambio queda en RegistroEventos con el valor anterior y el nuevo.</p>
+  <p class="nota">El sueldo de panadero y ayudante entra en el costo unitario de Baguette y CupCake según la proporción de cada hoja de costo. Los demás sueldos van al gasto operacional.</p>
+</section>
+<section class="captura">
+  <h2>Agregar una plaza</h2>
+  <form method="post" action="{{ url_for('grupo4.nueva_plaza') }}" data-escribe class="formulario formulario--fila" data-confirmar="Una plaza agregada no se borra desde aquí. ¿Agregarla?">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <div class="campo campo--ancho">
+      <label for="nombre">Nombre de la plaza</label>
+      <input id="nombre" name="nombre" type="text" maxlength="60" autocomplete="off" required>
+    </div>
+    <div class="campo campo--corto">
+      <label for="personas-nueva">Personas</label>
+      <input id="personas-nueva" name="personas" type="number" min="0" max="99" step="1" inputmode="numeric" required>
+    </div>
+    <div class="campo campo--corto">
+      <label for="sueldo-nueva">Sueldo mensual</label>
+      <input id="sueldo-nueva" name="sueldo" type="number" min="0" step="0.01" inputmode="decimal" required>
+    </div>
+    <button class="boton boton--secundario" type="submit">Agregar plaza</button>
+  </form>
+  <p class="nota">Va en la siguiente fila libre (de la {{ primera_libre }} a la {{ ultima_libre }}), que ya tiene sus fórmulas. Para dejarla sin efecto se le ponen 0 personas.</p>
+</section>
+{% else %}
+<p class="nota">La planilla la cambia solo administración. Ingresaste como {{ nombre_rol|lower }}.</p>
+{% endif %}
+
+<h2 class="subtitulo">Plazas</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Plaza</th>
+      <th scope="col" class="num">Personas</th>
+      <th scope="col" class="num">Sueldo</th>
+      <th scope="col" class="num">Sueldo total</th>
+      <th scope="col" class="num">Cargas sociales 26.5 %</th>
+      <th scope="col" class="num">Aguinaldo 8.33 %</th>
+      <th scope="col" class="num">Costo total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in leido.plazas %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      <td data-titulo="Plaza">{{ f.plaza }}{% if not f.fija %} <span class="sello sello--pendiente">Agregada</span>{% endif %}</td>
+      <td data-titulo="Personas" class="num"><strong>{{ f.personas_texto }}</strong></td>
+      <td data-titulo="Sueldo" class="num"><strong>{{ f.sueldo_texto }}</strong></td>
+      <td data-titulo="Sueldo total" class="num">{{ f.sueldo_total_texto }}</td>
+      <td data-titulo="Cargas sociales" class="num">{{ f.cargas_texto }}</td>
+      <td data-titulo="Aguinaldo" class="num">{{ f.aguinaldo_texto }}</td>
+      <td data-titulo="Costo total" class="num">{{ f.costo_total_texto }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2 class="subtitulo">Resumen del mes, por semestre</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Periodo</th>
+      <th scope="col" class="num">Personas</th>
+      <th scope="col" class="num">Sueldo total</th>
+      <th scope="col" class="num">Cargas sociales</th>
+      <th scope="col" class="num">Aguinaldo</th>
+      <th scope="col" class="num">Costo total</th>
+      <th scope="col" class="num">Riesgo del trabajo 7 %</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in leido.resumen %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      <td data-titulo="Periodo">{{ f.concepto }}</td>
+      <td data-titulo="Personas" class="num">{{ f.personas_texto }}</td>
+      <td data-titulo="Sueldo total" class="num">{{ f.sueldo_total_texto }}</td>
+      <td data-titulo="Cargas sociales" class="num">{{ f.cargas_texto }}</td>
+      <td data-titulo="Aguinaldo" class="num">{{ f.aguinaldo_texto }}</td>
+      <td data-titulo="Costo total" class="num">{{ f.costo_total_texto }}</td>
+      <td data-titulo="Riesgo del trabajo" class="num">{{ f.riesgo_texto }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja planilla. Son montos de un mes; de julio a diciembre el Excel aplica el aumento de 3 %. De estas dos filas lee la hoja gasto operacional.</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>Los botones llaman a las funciones <code>actualizar_plaza</code> y <code>agregar_plaza</code> del robot, que escriben solo el número de personas y el sueldo. Las fórmulas de cada fila ya existen y no se tocan.</p>
+  <p>Hay dos plazas que se llaman Otros en el Excel; aquí se muestran como Otros 1 y Otros 2 para distinguirlas.</p>
+</details>
+{% endblock %}

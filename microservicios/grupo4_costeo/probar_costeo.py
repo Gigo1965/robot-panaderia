@@ -14,6 +14,10 @@ casos: 8 validos y 7 rechazados). Se revisa que los 7 eventos de antes sigan dic
 que el nuevo diga "SaaS (administracion)" y que leer_costeo lea el precio nuevo. Los eventos CONFIG_
 se cuentan como NUEVOS (despues menos antes): asi la prueba sirve tambien sobre una copia que ya
 traiga eventos CONFIG_ de otras pantallas (antes exigia 7 en todo el libro).
+
+|| 5-oct-2026 (noche), proporciones de las hojas de costo (decision del usuario): casos 16 a 21
+(son 21 casos: 10 validos y 11 rechazados). Se revisa que la celda guarde la fraccion, que
+'gasto operacional' fila 9 reste de la planilla lo que se cargo a produccion y las lecturas nuevas.
 """
 import os
 import shutil
@@ -94,6 +98,16 @@ def main():
          debe_fallar=True)
     caso(15, "Precio de referencia CupCake = 345 con origen 'SaaS (administracion)' (#78)",
          costeo.actualizar_precio_referencia, "Pa01", 345, origen="SaaS (administracion)", estado="OK")
+    caso(16, "Proporcion del panadero en Baguette = 75 %", costeo.actualizar_proporcion, "P01", "panadero", 75,
+         estado="OK")
+    caso(17, "Panadero en CupCake = 30 % (75 + 30 pasa de 100 %): RECHAZAR", costeo.actualizar_proporcion,
+         "Pa01", "panadero", 30, debe_fallar=True)
+    caso(18, "Proporcion 101 %: RECHAZAR", costeo.actualizar_proporcion, "P01", "agua", 101, debe_fallar=True)
+    caso(19, "Concepto que no existe (harina): RECHAZAR", costeo.actualizar_proporcion, "P01", "harina", 50,
+         debe_fallar=True)
+    caso(20, "Panadero en Baguette = 75 % otra vez: SIN_CAMBIO", costeo.actualizar_proporcion, "Baguette",
+         "Panadero", "75 %", estado="SIN_CAMBIO")
+    caso(21, "Producto de reventa (L01): RECHAZAR", costeo.actualizar_proporcion, "L01", "agua", 10, debe_fallar=True)
 
     print("\n=== Revision final del libro ===")
     antes, despues = formulas(ORIGINAL), formulas(TEMPORAL)
@@ -113,14 +127,35 @@ def main():
     nuevos = [e for e in eventos_config(v) if e[0] not in de_antes]
     origenes = [e[2] for e in nuevos]
     cupcake = next(p for p in costeo.leer_costeo(v) if p["codigo"] == "Pa01")
+    baguette = next(p for p in costeo.leer_costeo(v) if p["codigo"] == "P01")
+    go, cb, cc_ = v["gasto operacional"], v["costo pan baguette"], v["costo cupcakes"]
+    planilla_administrativa = pl["M14"].value - ((cb["B24"].value + cc_["B24"].value) * pl["D8"].value
+                                                 + (cb["B23"].value + cc_["B23"].value) * pl["D9"].value)
+    leido_planilla, leido_gastos, leido_activos = costeo.leer_planilla(v), costeo.leer_gastos(v), costeo.leer_activos(v)
     chequeos = [
         ("Total activos D36 = 7,817,500 (6,876,500 + 950,000 - 9,000)", va["D36"].value == 7817500),
         ("flujo caja proyecto D23 = D36", fcp["D23"].value == va["D36"].value),
         ("Depreciacion Refrigerador F14 = 118,750", va["F14"].value == 118750),
         ("Planilla: sueldo total Repartidor D13 = 300,000", pl["D13"].value == 300000),
-        ("RegistroEventos: 8 eventos CONFIG_ nuevos (7 de antes + el del caso 15)", len(nuevos) == 8),
-        ("Origen: los 7 primeros 'Robot Python' y el del caso 15 'SaaS (administracion)' (#78)",
-         origenes[:7] == ["Robot Python"] * 7 and origenes[7:] == ["SaaS (administracion)"]),
+        ("RegistroEventos: 9 eventos CONFIG_ nuevos (7 de antes + el del caso 15 + el del caso 16)", len(nuevos) == 9),
+        ("Origen: 'Robot Python' en todos menos el del caso 15, que dice 'SaaS (administracion)' (#78)",
+         origenes == ["Robot Python"] * 7 + ["SaaS (administracion)"] + ["Robot Python"]),
+        ("Proporcion: 'costo pan baguette'!B24 guarda 0.75 y el evento es CONFIG_PROPORCION_COSTO",
+         cb["B24"].value == 0.75 and nuevos[-1][1] == "CONFIG_PROPORCION_COSTO"),
+        (f"leer_costeo: panadero en Baguette 75 %, en CupCake {cc_['B24'].value * 100:g} %, maximo {(1 - cc_['B24'].value) * 100:g} %",
+         next((x["valor"], x["valor_otro"], x["maximo"]) for x in baguette["proporciones"] if x["concepto"] == "panadero")
+         == (0.75, cc_["B24"].value, round(1 - cc_["B24"].value, 4))),
+        (f"'gasto operacional'!B9 = planilla menos lo cargado a produccion ({planilla_administrativa:,.2f})",
+         round(go["B9"].value, 2) == round(planilla_administrativa, 2)),
+        ("leer_planilla: Panadero con sueldo 360,000 y la plaza Repartidor en la fila 13",
+         any(x["plaza"] == "Panadero" and x["sueldo"] == 360000 for x in leido_planilla["plazas"])
+         and any(x["plaza"] == "Repartidor" and x["fila"] == 13 for x in leido_planilla["plazas"])),
+        ("leer_gastos: 13 rubros, 9 manuales, Electricidad de marzo 210,000",
+         len(leido_gastos["rubros"]) == 13 and sum(1 for x in leido_gastos["rubros"] if x["manual"]) == 9
+         and next(x for x in leido_gastos["rubros"] if x["rubro"] == "Electricidad")["meses"][2] == 210000),
+        ("leer_activos: Refrigerador en la lista y total de activos igual a D36",
+         any(x["activo"] == "Refrigerador" for x in leido_activos["activos"])
+         and leido_activos["totales"]["total_activos"] == va["D36"].value),
         ("leer_costeo lee el precio de referencia nuevo de CupCake (345) y su utilidad",
          cupcake["precio_referencia"] == 345
          and round(cupcake["utilidad"], 2) == round(345 - cupcake["costo_unitario"], 2)),

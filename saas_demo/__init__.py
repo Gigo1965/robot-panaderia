@@ -16,4 +16,5 @@ En Render es un servicio aparte del bot (ver app.py).
 || 5-oct-2026: grupo3.py tambien trae 'Tabla combos dinamicos': configuracion de cada combo (#65).
 || 5-oct-2026 (tarde): y la composicion de cada combo (#85), en la misma pantalla.
 || 5-oct-2026 (noche): grupo4.py  Costo pan baguette y Costo cupcakes (lectura) y precio de referencia.
+|| 5-oct-2026 (noche): grupo4.py tambien trae las proporciones de las hojas de costo, Planilla, Gasto operacional y Valor activos.
 """
