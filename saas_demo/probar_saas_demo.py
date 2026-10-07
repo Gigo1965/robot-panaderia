@@ -51,6 +51,11 @@ Que revisa:
      recibe 403 y su menu no muestra el grupo). Caja chica del dia (columna G, #66): total del dia con motivo, de 0 a
      500,000, sin fechas futuras; el Excel la suma a los egresos y la resta del saldo de caja. Salidas de efectivo del
      mes (fila 19, #67): valor fijo en la celda del mes. Evento con valor anterior y nuevo y origen SaaS.
+  S) Grupo 5, paquete 2 (6-oct-2026): 'flujo caja proyecto', 'Punto de Equilibrio', 'TIR VAR', 'proyeccion ventas' y
+     'proyeccion anual ventas', SOLO administracion. Tasa (C28) y plazo (B31) del prestamo (#68): la celda guarda el
+     porcentaje tal cual; plazo distinto de 60 meses, con aviso. Mezcla de ventas (B11, #69): la celda guarda la
+     fraccion; si un margen queda negativo, se guarda con aviso. La pantalla muestra el VAN y la TIR de antes y de
+     despues. Las otras tres hojas son solo lectura, sin formularios.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
@@ -62,6 +67,7 @@ Escribe 13 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca
 || 5-oct-2026 (noche): se agrego P (hojas de costo, Grupo 4), con 2 escrituras mas: ahora son 26 y tarda cerca de 6.5 minutos.
 || 5-oct-2026 (noche): se agrego Q (Grupo 4, paquete 2), con 8 escrituras mas: ahora son 34 y tarda cerca de 8 minutos.
 || 6-oct-2026: se agrego R (Grupo 5, paquete 1), con 3 escrituras mas: ahora son 37 y tarda cerca de 8.5 minutos.
+|| 6-oct-2026: se agrego S (Grupo 5, paquete 2), con 6 escrituras mas: ahora son 43 y tarda cerca de 10 minutos.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
@@ -1228,6 +1234,98 @@ def main():
     revisar(evento.get("TIPO_EVENTO") == fz.EVENTO_SALIDAS and evento.get("ORIGEN") == "SaaS (administracion)"
             and str(evento.get("ID_ENTIDAD")) == "noviembre" and "->" in str(evento.get("DETALLE")),
             f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+
+    # ------------------------------------------------------------------ S
+    paso("S) Flujo caja proyecto, Punto de equilibrio, TIR VAR y proyecciones de ventas: solo administracion")
+    libro_s = leer_excel()
+    ind_0 = fz.leer_indicadores(libro_s)
+    proyecto_0, equilibrio_0 = fz.leer_flujo_proyecto(libro_s), fz.leer_punto_equilibrio(libro_s)
+    pantallas_s = (
+        ("/flujo-caja-proyecto", 2, [f["etiqueta"] for f in proyecto_0["filas"]] + [c["etiqueta"] for c in proyecto_0["capital"]]),
+        ("/punto-de-equilibrio", 2, [f["etiqueta"] for f in equilibrio_0["filas"]]),
+        ("/tir-var", 0, ["Valor actual neto (VAN)", "Tasa interna de retorno (TIR)", "Periodo de recuperación", "Flujo acumulado"]),
+        ("/proyeccion-ventas", 0, [f["etiqueta"] for f in fz.leer_proyeccion_ventas(libro_s)["filas"]]),
+        ("/proyeccion-anual-ventas", 0, [f["etiqueta"] for f in fz.leer_proyeccion_anual(libro_s)["filas"]]),
+    )
+    menu_despacho, menu_admin = despacho.get("/ventas-despacho").data, admin.get("/ventas-despacho").data
+    revisar(all(despacho.get(ruta).status_code == 403 and ruta.encode() not in menu_despacho and ruta.encode() in menu_admin
+                for ruta, _, _ in pantallas_s),
+            "despacho no ve ninguna de las cinco pantallas (403) y su menu no las ofrece; el de administracion si")
+    for ruta, formularios, textos in pantallas_s:
+        pagina = admin.get(f"{ruta}?actualizar=1")
+        texto = html.unescape(pagina.get_data(as_text=True))
+        revisar(pagina.status_code == 200 and pagina.data.count(b"data-escribe") == formularios and all(t in texto for t in textos),
+                f"administracion ve {ruta} ({len(textos)} renglones revisados) "
+                + (f"con {formularios} formularios" if formularios else "sin formularios: solo lectura"))
+    huella_antes = huella(COPIA_TEMPORAL)
+    codigos = [enviar(despacho, ficha_despacho, "/flujo-caja-proyecto/prestamo", campo="tasa", valor="5").status_code,
+               enviar(despacho, ficha_despacho, "/punto-de-equilibrio/supuesto", campo="mezcla", valor="5").status_code]
+    revisar(codigos == [403, 403] and huella(COPIA_TEMPORAL) == huella_antes,
+            "despacho no puede cambiar los supuestos: las 2 escrituras responden 403 y el Excel no cambia")
+    for ruta, campos in (("/flujo-caja-proyecto/prestamo", {"campo": "tasa", "valor": "101"}),
+                         ("/flujo-caja-proyecto/prestamo", {"campo": "plazo", "valor": "0"}),
+                         ("/flujo-caja-proyecto/prestamo", {"campo": "plazo", "valor": "12.5"}),
+                         ("/flujo-caja-proyecto/prestamo", {"campo": "mezcla", "valor": "50"})):
+        enviar(admin, ficha_admin, ruta, **campos)
+    texto = texto_de(admin, "/flujo-caja-proyecto")
+    for campos in ({"campo": "mezcla", "valor": "150"}, {"campo": "utilidad", "valor": "-1"}, {"campo": "tasa", "valor": "5"}):
+        enviar(admin, ficha_admin, "/punto-de-equilibrio/supuesto", **campos)
+    texto_2 = texto_de(admin, "/punto-de-equilibrio")
+    revisar(texto.count("El robot no lo permitió") == 3 and texto.count("Escribe el dato nuevo") == 1
+            and texto_2.count("El robot no lo permitió") == 2 and texto_2.count("Escribe el dato nuevo") == 1
+            and huella(COPIA_TEMPORAL) == huella_antes,
+            "rechazados sin escribir: tasa 101, plazo 0, plazo 12.5, mezcla 150 y utilidad negativa; y cada pantalla solo "
+            "acepta sus dos datos (la mezcla no se cambia desde el prestamo ni la tasa desde el punto de equilibrio)")
+
+    # --- Tasa y plazo del prestamo
+    tasa_nueva = round(ind_0["tasa"] + 1, 2) if ind_0["tasa"] <= 99 else round(ind_0["tasa"] - 1, 2)
+    enviar(admin, ficha_admin, "/flujo-caja-proyecto/prestamo", campo="tasa", valor=f"{tasa_nueva:g}")
+    texto = texto_de(admin, "/flujo-caja-proyecto")
+    ind_1 = fz.leer_indicadores(leer_excel())
+    revisar(ind_1["tasa"] == tasa_nueva and abs(fz.leer_tir_var(leer_excel())["tasa"] - tasa_nueva / 100) < 1e-9
+            and (ind_1["cuota_anual"] > ind_0["cuota_anual"]) == (tasa_nueva > ind_0["tasa"])
+            and "Guardado en el Excel en" in texto and "VAN" in texto and "TIR" in texto,
+            f"tasa {ind_0['tasa']:g} % -> {tasa_nueva:g} % (la celda guarda {ind_1['tasa']:g}): cuota anual {ind_0['cuota_anual']:,.2f} -> "
+            f"{ind_1['cuota_anual']:,.2f}; VAN {ind_0['van']:,.2f} -> {ind_1['van']:,.2f}; la pantalla muestra el aviso con el tiempo")
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == fz.EVENTO_PRESTAMO and evento.get("ORIGEN") == "SaaS (administracion)"
+            and str(evento.get("ID_ENTIDAD")) == proyecto_0["prestamo"]["celda_tasa"] and "->" in str(evento.get("DETALLE")),
+            f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    plazo_nuevo = 48 if ind_0["plazo"] != 48 else 36
+    enviar(admin, ficha_admin, "/flujo-caja-proyecto/prestamo", campo="plazo", valor=str(plazo_nuevo))
+    texto = texto_de(admin, "/flujo-caja-proyecto")
+    revisar(fz.leer_indicadores(leer_excel())["plazo"] == plazo_nuevo and "Guardado en el Excel en" in texto
+            and ("cinco años" in texto and "Se guardo igual" in texto) == (plazo_nuevo != fz.PLAZO_DEL_MODELO),
+            f"plazo {ind_0['plazo']:g} -> {plazo_nuevo} meses: se guarda y la pantalla avisa que la proyeccion esta hecha para "
+            f"{fz.PLAZO_DEL_MODELO} meses")
+    enviar(admin, ficha_admin, "/flujo-caja-proyecto/prestamo", campo="plazo", valor=f"{ind_0['plazo']:g}")
+    enviar(admin, ficha_admin, "/flujo-caja-proyecto/prestamo", campo="tasa", valor=f"{ind_0['tasa']:g}")
+    texto_de(admin, "/flujo-caja-proyecto")
+
+    # --- Mezcla de ventas
+    mezcla_0 = round(ind_0["mezcla"] * 100, 2)
+    mezcla_nueva = mezcla_0 + 10 if mezcla_0 <= 90 else mezcla_0 - 10
+    enviar(admin, ficha_admin, "/punto-de-equilibrio/supuesto", campo="mezcla", valor=f"{mezcla_nueva:g}")
+    texto = texto_de(admin, "/punto-de-equilibrio")
+    ind_2 = fz.leer_indicadores(leer_excel())
+    hay_perdida = any(ind_2[m] is not None and ind_2[m] < 0 for m in ("margen_baguette", "margen_cupcake", "margen_ponderado"))
+    revisar(ind_2["mezcla"] == round(mezcla_nueva / 100, 4) and ind_2["equilibrio_ajustado"] != ind_0["equilibrio_ajustado"]
+            and "Guardado en el Excel en" in texto and ("deja perdida" in texto) == hay_perdida,
+            f"mezcla de Baguette {mezcla_0:g} % -> {mezcla_nueva:g} % (la celda guarda la fraccion {ind_2['mezcla']}): punto de equilibrio "
+            f"ajustado {ind_0['equilibrio_ajustado']:,.0f} -> {ind_2['equilibrio_ajustado']:,.0f}; "
+            + ("hay un margen negativo (hornada pequeña cargada): se guardo y la pantalla avisa que la operacion deja perdida"
+               if hay_perdida else "los margenes son positivos: no hay aviso"))
+    evento = ultimo_evento()
+    revisar(evento.get("TIPO_EVENTO") == fz.EVENTO_EQUILIBRIO and evento.get("ORIGEN") == "SaaS (administracion)"
+            and str(evento.get("ID_ENTIDAD")) == equilibrio_0["mezcla"]["celda"] and "->" in str(evento.get("DETALLE")),
+            f"evento {evento.get('ID_EVENTO')}: {evento.get('DETALLE')}")
+    enviar(admin, ficha_admin, "/punto-de-equilibrio/supuesto", campo="mezcla", valor=f"{mezcla_0:g}")
+    texto_de(admin, "/punto-de-equilibrio")
+    ind_3 = fz.leer_indicadores(leer_excel())
+    revisar(all(abs((ind_3[k] or 0) - (ind_0[k] or 0)) < 0.005 for k in ("tasa", "plazo", "mezcla", "utilidad", "van", "tir",
+                                                                         "equilibrio_ajustado", "cuota_anual")),
+            f"con la tasa, el plazo y la mezcla del inicio, todo vuelve a su valor: VAN {ind_3['van']:,.2f}, TIR "
+            f"{ind_3['tir'] * 100:.2f} %, punto de equilibrio ajustado {ind_3['equilibrio_ajustado']:,.0f}")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")

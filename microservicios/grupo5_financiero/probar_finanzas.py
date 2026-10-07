@@ -6,11 +6,17 @@ datos_prueba/_prueba_finanzas.xlsx (se reemplaza en cada corrida) y ahi ejecuta 
 calculo el Excel (egresos del dia, saldo de caja), los eventos, que la fila 26 de 'flujo caja anual'
 siga vacia y que TODAS las formulas del libro quedaron identicas al original.
 
+|| 6-oct-2026 (paquete 2): casos 27 a 43, los cuatro supuestos financieros ('flujo caja proyecto' C28 y
+B31; 'Punto de Equilibrio' B11 y B22): 8 cambios validos, 1 repetido y 8 rechazados. Son 43 casos:
+17 validos, 3 repetidos y 23 rechazados. Se revisa como guarda cada celda el numero (12.51 en C28;
+la fraccion en B11 y B22), el aviso del plazo distinto de 60 meses, que el VAN, la TIR y el punto de
+equilibrio vuelven a su valor al devolver los datos, y que los textos fijos A29 y A23 no cambiaron.
+
 La prueba no da por hecho ningun valor del Excel: compara contra lo que lee al empezar.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m microservicios.grupo5_financiero.probar_finanzas
-Tarda cerca de 2 minutos: cada cambio valido se recalcula con LibreOffice, igual que en produccion.
+Tarda cerca de 4 minutos: cada cambio valido se recalcula con LibreOffice, igual que en produccion.
 """
 import os
 import shutil
@@ -33,6 +39,8 @@ from microservicios.grupo5_financiero import finanzas                    # noqa:
 from microservicios.grupo5_financiero.finanzas import FinanzasInvalido   # noqa: E402
 
 resultados = []
+# Donde dice el mapa que esta cada supuesto (la funcion los ubica por su etiqueta; aqui se comprueba que coinciden).
+SUPUESTO_CELDA = {campo: definicion["celda_mapa"] for campo, definicion in finanzas.SUPUESTOS.items()}
 
 
 def caso(numero, descripcion, funcion, *args, debe_fallar=False, estado=None, **kwargs):
@@ -43,7 +51,8 @@ def caso(numero, descripcion, funcion, *args, debe_fallar=False, estado=None, **
         detalle = f"rechazado: {str(error)[:100]}"
     else:
         ok = (not debe_fallar) and (estado is None or r["estado"] == estado)
-        detalle = f"{r['estado']} {r['celda']} {r['antes']!r} -> {r['despues']!r}"
+        detalle = f"{r['estado']} {r['celda']} {r['antes']!r} -> {r['despues']!r}" + (" | AVISO" if r.get("avisos") else "")
+        caso.ultimo = r
     resultados.append(ok)
     print(f"{'OK   ' if ok else 'FALLO'} {numero:>2}. {descripcion}\n         {detalle}")
 
@@ -186,6 +195,96 @@ def main():
     leido = finanzas.leer_flujo_diario(valores(), hoy=hoy)
     revisar(round(leido["saldo"] - inicio["saldo"], 2) == 0,
             f"con la caja chica en sus valores del inicio, el saldo de caja vuelve a {inicio['saldo']:,.2f}")
+
+    print("\n--- Supuestos financieros ('flujo caja proyecto' C28 y B31; 'Punto de Equilibrio' B11 y B22) ---")
+    ind0 = finanzas.leer_indicadores(valores())
+    eventos_antes = len(eventos(valores()))
+    textos0 = {celda: load_workbook(TEMPORAL)[hoja][celda].value
+               for hoja, celda in ((finanzas.HOJA_PROYECTO, "A29"), (finanzas.HOJA_EQUILIBRIO, "A23"))}
+    print(f"Al empezar: tasa {ind0['tasa']:g} %, plazo {ind0['plazo']:g} meses, mezcla {ind0['mezcla'] * 100:g} %, utilidad "
+          f"esperada {ind0['utilidad'] * 100:g} %; VAN {ind0['van']:,.2f}, TIR {ind0['tir'] * 100:.2f} %, punto de equilibrio "
+          f"ajustado {ind0['equilibrio_ajustado']:,.0f} unidades")
+
+    def iguales(a, b):
+        return all(abs((a[k] or 0) - (b[k] or 0)) < 0.005 for k in ("van", "tir", "recuperacion", "equilibrio_ajustado",
+                                                                  "cuota_anual", "tasa", "plazo", "mezcla", "utilidad"))
+
+    tasa_nueva = round(ind0["tasa"] + 1.49, 2) if ind0["tasa"] <= 98 else round(ind0["tasa"] - 1.49, 2)
+    caso(27, f"Tasa del prestamo {ind0['tasa']:g} % -> {tasa_nueva:g} %", finanzas.actualizar_supuesto, "tasa",
+         f"{tasa_nueva:g}".replace(".", ","), estado="OK")
+    r = caso.ultimo
+    ind = r["indicadores"]
+    tasa_descuento = finanzas.leer_tir_var(valores())["tasa"]
+    revisar(r["celda"] == SUPUESTO_CELDA["tasa"] and ind["tasa"] == tasa_nueva and abs(tasa_descuento - tasa_nueva / 100) < 1e-9
+            and (ind["cuota_anual"] > ind0["cuota_anual"]) == (tasa_nueva > ind0["tasa"]),
+            f"la celda {r['celda']} guarda {ind['tasa']:g} (el porcentaje tal cual); la cuota anual pasa de "
+            f"{ind0['cuota_anual']:,.2f} a {ind['cuota_anual']:,.2f} y 'TIR VAR' descuenta al {tasa_descuento * 100:g} %")
+    caso(28, "La misma tasa otra vez: SIN_CAMBIO", finanzas.actualizar_supuesto, "tasa", tasa_nueva, estado="SIN_CAMBIO")
+    plazo_nuevo = 36 if ind0["plazo"] != 36 else 48
+    caso(29, f"Plazo {ind0['plazo']:g} -> {plazo_nuevo} meses: se guarda con AVISO", finanzas.actualizar_supuesto, "plazo",
+         plazo_nuevo, estado="OK")
+    r = caso.ultimo
+    revisar(len(r["avisos"]) == 1 and "cinco años" in r["avisos"][0]
+            and r["indicadores"]["cuota_mensual"] > ind["cuota_mensual"],
+            f"plazo distinto de {finanzas.PLAZO_DEL_MODELO} meses: guardado con aviso; la cuota mensual sube a "
+            f"{r['indicadores']['cuota_mensual']:,.2f}")
+    caso(30, f"Devolver el plazo a {ind0['plazo']:g} meses", finanzas.actualizar_supuesto, "plazo", ind0["plazo"], estado="OK")
+    revisar(bool(caso.ultimo["avisos"]) == (ind0["plazo"] != finanzas.PLAZO_DEL_MODELO),
+            f"con {ind0['plazo']:g} meses " + ("hay aviso" if ind0["plazo"] != finanzas.PLAZO_DEL_MODELO else "no hay aviso"))
+    caso(31, f"Devolver la tasa a {ind0['tasa']:g} %", finanzas.actualizar_supuesto, "tasa", ind0["tasa"], estado="OK")
+    revisar(iguales(caso.ultimo["indicadores"], ind0),
+            "con la tasa y el plazo del inicio, el VAN, la TIR, la recuperacion y el punto de equilibrio vuelven a su valor")
+
+    mezcla_0, utilidad_0 = round(ind0["mezcla"] * 100, 2), round(ind0["utilidad"] * 100, 2)
+    mezcla_nueva = mezcla_0 + 10 if mezcla_0 <= 90 else mezcla_0 - 10
+    utilidad_nueva = utilidad_0 + 5 if utilidad_0 <= 95 else utilidad_0 - 5
+    caso(32, f"Mezcla de ventas de Baguette {mezcla_0:g} % -> {mezcla_nueva:g} %", finanzas.actualizar_supuesto, "mezcla",
+         f"{mezcla_nueva:g} %", origen="SaaS (administracion)", estado="OK")
+    r = caso.ultimo
+    wb = valores()
+    equilibrio = finanzas.leer_punto_equilibrio(wb)
+    por_celda = {f["celda"]: f["valor"] for f in equilibrio["filas"]}
+    fila_mezcla = equilibrio["mezcla"]["fila"]
+    proyecto = finanzas.leer_flujo_proyecto(wb)
+    unidades = next(f for f in proyecto["filas"] if f["etiqueta"].casefold().startswith("cantidad"))["valores"]
+    revisar(r["despues"] == round(mezcla_nueva / 100, 4) and abs(por_celda[f"B{fila_mezcla + 1}"] - (1 - mezcla_nueva / 100)) < 1e-9
+            and unidades[0] + unidades[1] in (r["indicadores"]["equilibrio_ajustado"], r["indicadores"]["equilibrio_ajustado"] + 1,
+                                              r["indicadores"]["equilibrio_ajustado"] - 1)
+            and unidades[0] != unidades[1],
+            f"la celda {r['celda']} guarda la fraccion {r['despues']}; CupCake queda en {por_celda[f'B{fila_mezcla + 1}'] * 100:g} % y "
+            f"'flujo caja proyecto' lee las unidades nuevas ({unidades[0]:,.0f} Baguette y {unidades[1]:,.0f} CupCake)")
+    caso(33, f"Utilidad esperada anual {utilidad_0:g} % -> {utilidad_nueva:g} %", finanzas.actualizar_supuesto, "utilidad",
+         utilidad_nueva, estado="OK")
+    r2 = caso.ultimo
+    revisar(r2["despues"] == round(utilidad_nueva / 100, 4)
+            and (r2["indicadores"]["equilibrio_ajustado"] > r["indicadores"]["equilibrio_ajustado"]) == (utilidad_nueva > utilidad_0),
+            f"la celda {r2['celda']} guarda la fraccion {r2['despues']}; el punto de equilibrio ajustado pasa de "
+            f"{r['indicadores']['equilibrio_ajustado']:,.0f} a {r2['indicadores']['equilibrio_ajustado']:,.0f} unidades")
+    caso(34, f"Devolver la mezcla a {mezcla_0:g} %", finanzas.actualizar_supuesto, "mezcla", mezcla_0, estado="OK")
+    caso(35, f"Devolver la utilidad esperada a {utilidad_0:g} %", finanzas.actualizar_supuesto, "utilidad", utilidad_0, estado="OK")
+    revisar(iguales(caso.ultimo["indicadores"], ind0),
+            f"con los cuatro supuestos del inicio: VAN {caso.ultimo['indicadores']['van']:,.2f}, TIR "
+            f"{caso.ultimo['indicadores']['tir'] * 100:.2f} % y punto de equilibrio ajustado "
+            f"{caso.ultimo['indicadores']['equilibrio_ajustado']:,.0f} unidades, iguales a los del inicio")
+    antes = TEMPORAL.read_bytes()
+    for numero, descripcion, argumentos in (
+            (36, "Tasa 101 %", ("tasa", 101)), (37, "Tasa negativa", ("tasa", -1)), (38, "Tasa con letras", ("tasa", "doce")),
+            (39, "Plazo 0", ("plazo", 0)), (40, "Plazo 12.5 (no es entero)", ("plazo", "12.5")),
+            (41, f"Plazo {finanzas.TOPE_PLAZO + 1} (sobre el tope)", ("plazo", finanzas.TOPE_PLAZO + 1)),
+            (42, "Mezcla 150 %", ("mezcla", 150)), (43, "Un supuesto que no existe ('iva')", ("iva", 13))):
+        caso(numero, f"{descripcion}: RECHAZAR", finanzas.actualizar_supuesto, *argumentos, debe_fallar=True)
+    revisar(TEMPORAL.read_bytes() == antes, "los 8 rechazos no escribieron nada (el archivo quedo identico)")
+    nuevos = eventos(valores())[eventos_antes:]
+    revisar([e.get("TIPO_EVENTO") for e in nuevos] == [finanzas.EVENTO_PRESTAMO] * 4 + [finanzas.EVENTO_EQUILIBRIO] * 4
+            and all("->" in str(e.get("DETALLE")) for e in nuevos)
+            and [e.get("ORIGEN") for e in nuevos] == ["Robot Python"] * 4 + ["SaaS (administracion)"] + ["Robot Python"] * 3,
+            "8 eventos nuevos (4 CONFIG_PRESTAMO y 4 CONFIG_PUNTO_EQUILIBRIO), cada uno con el valor anterior -> el nuevo y su origen")
+    for evento in nuevos[:1] + nuevos[4:5]:
+        print(f"         {evento.get('ID_EVENTO')} {evento.get('TIPO_EVENTO')}: {evento.get('DETALLE')}")
+    libro = load_workbook(TEMPORAL)
+    revisar(all(libro[hoja][celda].value == textos0[celda]
+                for hoja, celda in ((finanzas.HOJA_PROYECTO, "A29"), (finanzas.HOJA_EQUILIBRIO, "A23"))),
+            f"los textos fijos no se tocaron: 'flujo caja proyecto'!A29 = {textos0['A29']!r} y 'Punto de Equilibrio'!A23 sigue igual")
 
     f_antes, f_despues = formulas(ORIGINAL), formulas(TEMPORAL)
     revisar(f_antes == f_despues, f"las {len(f_antes)} formulas del libro quedaron IDENTICAS al original")

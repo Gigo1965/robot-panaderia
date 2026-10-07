@@ -76,6 +76,11 @@ MENU = [
         # Decision del usuario (6-oct-2026): todo el Grupo 5 lo ve y lo cambia solo administracion.
         ("Flujo caja diario", "grupo5.flujo_diario", True),
         ("Flujo caja anual", "grupo5.flujo_anual", True),
+        ("Flujo caja proyecto", "grupo5.flujo_proyecto", True),
+        ("Punto de equilibrio", "grupo5.punto_equilibrio", True),
+        ("TIR VAR", "grupo5.tir_var", True),
+        ("Proyección de ventas", "grupo5.proyeccion_ventas", True),
+        ("Proyección anual de ventas", "grupo5.proyeccion_anual", True),
     ]),
 ]
 _intentos = {}          # direccion -> [fallos, bloqueado_hasta]
@@ -329,7 +334,7 @@ from .grupo1 import grupo1          # noqa: E402  Ventas despacho, descuento gen
 from .grupo2 import grupo2          # noqa: E402  Control de Inventario (existencia minima, #63) y Hornadas
 from .grupo3 import grupo3          # noqa: E402  NODO INTEGRAL (#64), tablas cruce maestras (lectura) y combos (#65)
 from .grupo4 import grupo4          # noqa: E402  Hojas de costo, planilla, gasto operacional y valor activos
-from .grupo5 import grupo5          # noqa: E402  Flujo caja diario (caja chica, #66) y flujo caja anual (salidas de efectivo, #67)
+from .grupo5 import grupo5          # noqa: E402  Las siete hojas financieras: flujos de caja (#66 a #68), punto de equilibrio (#69), TIR VAR y proyecciones
 
 app.register_blueprint(grupo1)
 app.register_blueprint(grupo2)

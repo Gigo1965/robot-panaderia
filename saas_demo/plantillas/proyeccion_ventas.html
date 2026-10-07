@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block titulo %}Proyección de ventas{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Proyección de ventas</h1>
+  <p class="encabezado__resumen">Las ventas que harían falta por día, por mes y por año para llegar al punto de equilibrio ajustado, tal como las calcula el Excel. Esta hoja no tiene ningún dato digitado: es solo lectura.</p>
+</div>
+
+<p class="cobro"><span>Utilidad bruta anual de los dos productos (celda {{ leido.celda_utilidad_anual }})</span> <strong>{{ utilidad_anual }}</strong></p>
+
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Concepto</th>
+      <th scope="col" class="num">Baguette</th>
+      <th scope="col" class="num">CupCake</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in leido.filas %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      <td data-titulo="Concepto">{{ f.etiqueta }}</td>
+      <td data-titulo="Baguette" class="num">{{ f.baguette_texto }}</td>
+      <td data-titulo="CupCake" class="num">{{ f.cupcake_texto }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja proyeccion ventas. Las unidades por día salen del punto de equilibrio ajustado; el precio y el costo unitario, del flujo de caja del proyecto.</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>No hay botones: el mapa de celdas marca esta hoja como 100 % automática. Cambia sola cuando cambian el punto de equilibrio, el precio de referencia o el costo unitario.</p>
+</details>
+{% endblock %}

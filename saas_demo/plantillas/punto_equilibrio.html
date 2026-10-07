@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block titulo %}Punto de equilibrio{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Punto de equilibrio</h1>
+  <p class="encabezado__resumen">Cuántas unidades hay que vender al año para cubrir el gasto operacional, la cuota del préstamo y la utilidad esperada, tal como lo calcula el Excel. Aquí se digitan dos decisiones de la administración: la mezcla de ventas y el porcentaje de utilidad esperada.</p>
+</div>
+
+<section class="captura">
+  <h2>Supuestos de la administración</h2>
+  <form method="post" action="{{ url_for('grupo5.supuesto_equilibrio') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="campo" value="mezcla">
+    <div class="campo campo--corto">
+      <label for="mezcla">Mezcla de ventas de Baguette (%)</label>
+      <input id="mezcla" name="valor" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="{{ mezcla }}" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar mezcla</button>
+  </form>
+  <form method="post" action="{{ url_for('grupo5.supuesto_equilibrio') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="campo" value="utilidad">
+    <div class="campo campo--corto">
+      <label for="utilidad">Utilidad esperada anual (%)</label>
+      <input id="utilidad" name="valor" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="{{ utilidad }}" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar utilidad esperada</button>
+  </form>
+  <p class="nota">Hoy: mezcla de Baguette {{ leido.mezcla.valor_texto }} (celda {{ leido.mezcla.celda }}) y utilidad esperada {{ leido.utilidad.valor_texto }} (celda {{ leido.utilidad.celda }}). Se escribe el porcentaje, de 0 a 100 (por ejemplo 50); el robot guarda la fracción en la celda (0.5). La mezcla de CupCake es el resto hasta 100 %.</p>
+  <p class="nota">La utilidad esperada es un estimado de la administración. Si un margen de contribución queda negativo, el dato se guarda y la pantalla avisa que la operación deja pérdida.</p>
+</section>
+
+<h2 class="subtitulo">Cálculo del punto de equilibrio</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Celda</th>
+      <th scope="col">Concepto</th>
+      <th scope="col">Quién lo escribe</th>
+      <th scope="col" class="num">Valor</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in leido.filas %}
+    <tr>
+      <td data-titulo="Celda">{{ f.celda }}</td>
+      <td data-titulo="Concepto">{{ f.etiqueta }}</td>
+      <td data-titulo="Quién lo escribe">{% if f.clase == 'manual' %}<span class="sello sello--pendiente">Administración</span>{% else %}Fórmula{% endif %}</td>
+      <td data-titulo="Valor" class="num">{% if 'PUNTO DE EQUILIBRIO' in f.etiqueta %}<strong>{{ f.valor_texto }}</strong>{% else %}{{ f.valor_texto }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja Punto de Equilibrio. {{ leido.nota }}</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>Cada botón llama a la función <code>actualizar_supuesto</code> del robot, que escribe una sola celda. El precio, el costo unitario, el gasto operacional y la cuota del préstamo llegan solos desde sus hojas.</p>
+  <p>Las unidades del punto de equilibrio ajustado son las que usa el flujo de caja del proyecto como ventas del año. El cambio queda en RegistroEventos con el valor anterior y el nuevo.</p>
+</details>
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block titulo %}Proyección anual de ventas{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Proyección anual de ventas</h1>
+  <p class="encabezado__resumen">La proyección de ventas repartida en los doce meses, tal como la calcula el Excel. Esta hoja no tiene ningún dato digitado: es solo lectura.</p>
+</div>
+
+<p class="cobro"><span>{{ leido.etiqueta_total }} (celda {{ leido.celda_total }})</span> <strong>{{ total }}</strong></p>
+
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Variable</th>
+      {% for corto in meses_cortos %}<th scope="col" class="num">{{ corto }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in leido.filas %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      <td data-titulo="Variable">{{ f.etiqueta }}</td>
+      {% for texto in f.meses_texto %}<td data-titulo="{{ meses_cortos[loop.index0] }}" class="num">{{ texto }}</td>{% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja proyeccion anual ventas. Todos los meses llevan las mismas unidades: son las ventas mensuales de la hoja proyeccion ventas.</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>No hay botones: el mapa de celdas marca esta hoja como 100 % automática. Depende de la hoja proyeccion ventas, que a su vez depende del punto de equilibrio y del flujo de caja del proyecto.</p>
+</details>
+{% endblock %}

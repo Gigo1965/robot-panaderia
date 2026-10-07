@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block titulo %}Flujo caja proyecto{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Flujo caja proyecto</h1>
+  <p class="encabezado__resumen">La proyección del proyecto a cinco años, tal como la calcula el Excel con el precio, el costo, el gasto operacional y las unidades del punto de equilibrio. Aquí se digitan dos datos del préstamo: la tasa de interés y el plazo.</p>
+</div>
+
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col" class="num">VAN</th>
+      <th scope="col" class="num">TIR</th>
+      <th scope="col" class="num">Recuperación</th>
+      <th scope="col" class="num">Cuota anual del préstamo</th>
+      <th scope="col" class="num">Punto de equilibrio ajustado</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td data-titulo="VAN" class="num"><strong>{{ cifras.van }}</strong></td>
+      <td data-titulo="TIR" class="num"><strong>{{ cifras.tir }}</strong></td>
+      <td data-titulo="Recuperación" class="num">{{ cifras.recuperacion }}</td>
+      <td data-titulo="Cuota anual del préstamo" class="num">{{ cifras.cuota_anual }}</td>
+      <td data-titulo="Punto de equilibrio ajustado" class="num">{{ cifras.equilibrio }} unidades al año</td>
+    </tr>
+  </tbody>
+</table>
+<p class="nota">Resultados que el Excel calcula con los datos de esta hoja (hojas TIR VAR y Punto de Equilibrio).</p>
+
+<section class="captura">
+  <h2>Préstamo</h2>
+  <form method="post" action="{{ url_for('grupo5.prestamo') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="campo" value="tasa">
+    <div class="campo campo--corto">
+      <label for="tasa">Tasa de interés anual (%)</label>
+      <input id="tasa" name="valor" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="{{ prestamo_texto.tasa_numero }}" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar tasa</button>
+  </form>
+  <form method="post" action="{{ url_for('grupo5.prestamo') }}" data-escribe class="formulario formulario--fila">
+    <input type="hidden" name="ficha" value="{{ ficha }}">
+    <input type="hidden" name="campo" value="plazo">
+    <div class="campo campo--corto">
+      <label for="plazo">Plazo (meses)</label>
+      <input id="plazo" name="valor" type="number" min="1" max="{{ tope_plazo }}" step="1" inputmode="numeric" placeholder="{{ prestamo_texto.plazo_numero }}" required>
+    </div>
+    <button class="boton boton--principal" type="submit">Guardar plazo</button>
+  </form>
+  <p class="nota">Hoy: tasa {{ prestamo_texto.tasa }} (celda {{ prestamo.celda_tasa }}) y plazo {{ prestamo_texto.plazo }} (celda {{ prestamo.celda_plazo }}). La tasa se escribe como porcentaje, de 0 a 100 (por ejemplo 12.51). La misma tasa es la que usa la hoja TIR VAR para calcular el VAN.</p>
+  <p class="nota">El plazo va en meses enteros. La proyección resta la cuota anual en los cinco años: está hecha para {{ leido.plazo_del_modelo }} meses. Con otro plazo se guarda y la pantalla lo avisa.</p>
+</section>
+
+<h2 class="subtitulo">Proyección 2026 a 2030</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Cuenta</th>
+      {% for titulo in leido.columnas %}<th scope="col" class="num">{{ titulo }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in leido.filas %}
+    {% if f.clase == 'titulo' %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      <td data-titulo="Cuenta" colspan="9"><strong>{{ f.etiqueta }}</strong></td>
+    </tr>
+    {% else %}
+    <tr>
+      <td data-titulo="Fila">{{ f.fila }}</td>
+      <td data-titulo="Cuenta">{{ f.etiqueta }}</td>
+      {% for texto in f.valores_texto %}<td data-titulo="{{ leido.columnas[loop.index0] }}" class="num">{{ texto }}</td>{% endfor %}
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja flujo caja proyecto. Todas estas filas son fórmulas. La fila Flujo de caja es la que lee la hoja TIR VAR.</p>
+
+<h2 class="subtitulo">Datos del préstamo</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Dato</th>
+      <th scope="col">Celda</th>
+      <th scope="col">Quién lo escribe</th>
+      <th scope="col" class="num">Valor</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td data-titulo="Dato">Tasa de interés anual</td>
+      <td data-titulo="Celda">{{ prestamo.celda_tasa }}</td>
+      <td data-titulo="Quién lo escribe"><span class="sello sello--pendiente">Administración</span></td>
+      <td data-titulo="Valor" class="num">{{ prestamo_texto.tasa }}</td>
+    </tr>
+    <tr>
+      <td data-titulo="Dato">Plazo</td>
+      <td data-titulo="Celda">{{ prestamo.celda_plazo }}</td>
+      <td data-titulo="Quién lo escribe"><span class="sello sello--pendiente">Administración</span></td>
+      <td data-titulo="Valor" class="num">{{ prestamo_texto.plazo }}</td>
+    </tr>
+    <tr>
+      <td data-titulo="Dato">Monto del préstamo (inversión más capital de trabajo)</td>
+      <td data-titulo="Celda">{{ prestamo.celda_monto }}</td>
+      <td data-titulo="Quién lo escribe">Fórmula</td>
+      <td data-titulo="Valor" class="num">{{ prestamo_texto.monto }}</td>
+    </tr>
+    <tr>
+      <td data-titulo="Dato">Cuota mensual</td>
+      <td data-titulo="Celda">{{ prestamo.celda_cuota_mensual }}</td>
+      <td data-titulo="Quién lo escribe">Fórmula</td>
+      <td data-titulo="Valor" class="num">{{ prestamo_texto.cuota_mensual }}</td>
+    </tr>
+    <tr>
+      <td data-titulo="Dato">Cuota anual</td>
+      <td data-titulo="Celda">{{ prestamo.celda_cuota_anual }}</td>
+      <td data-titulo="Quién lo escribe">Fórmula</td>
+      <td data-titulo="Valor" class="num">{{ prestamo_texto.cuota_anual }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 class="subtitulo">Capital de trabajo</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Concepto</th>
+      <th scope="col">Quién lo escribe</th>
+      <th scope="col" class="num">Monto</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in leido.capital %}
+    <tr>
+      <td data-titulo="Fila">{{ c.fila }}</td>
+      <td data-titulo="Concepto">{{ c.etiqueta }}</td>
+      <td data-titulo="Quién lo escribe">Fórmula</td>
+      <td data-titulo="Monto" class="num">{{ c.valor_texto }}</td>
+    </tr>
+    {% endfor %}
+    <tr>
+      <td data-titulo="Fila"></td>
+      <td data-titulo="Concepto"><strong>Total</strong> (celda {{ leido.celda_capital_total }})</td>
+      <td data-titulo="Quién lo escribe">Fórmula</td>
+      <td data-titulo="Monto" class="num"><strong>{{ capital_total }}</strong></td>
+    </tr>
+  </tbody>
+</table>
+<p class="nota">El capital de trabajo no se digita: sale de las hojas de costo, la planilla y el gasto operacional.</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>Cada botón llama a la función <code>actualizar_supuesto</code> del robot, que escribe una sola celda: la tasa o el plazo. El Excel recalcula la cuota, el punto de equilibrio, la proyección, el VAN y la TIR, y la pantalla muestra los resultados de antes y de después.</p>
+  <p>El cambio queda en RegistroEventos con el valor anterior y el nuevo.</p>
+</details>
+{% endblock %}

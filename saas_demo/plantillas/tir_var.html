@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block titulo %}TIR VAR{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>TIR VAR</h1>
+  <p class="encabezado__resumen">El valor actual neto, la tasa interna de retorno y el tiempo de recuperación de la inversión, tal como los calcula el Excel con el flujo de caja del proyecto. Esta hoja no tiene ningún dato digitado: es solo lectura.</p>
+</div>
+
+<h2 class="subtitulo">Resultado</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Indicador</th>
+      <th scope="col">Celda</th>
+      <th scope="col" class="num">Valor</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td data-titulo="Indicador">Valor actual neto (VAN)</td>
+      <td data-titulo="Celda">{{ leido.celda_van }}</td>
+      <td data-titulo="Valor" class="num"><strong>{{ cifras.van }}</strong></td>
+    </tr>
+    <tr>
+      <td data-titulo="Indicador">Tasa interna de retorno (TIR)</td>
+      <td data-titulo="Celda">{{ leido.celda_tir }}</td>
+      <td data-titulo="Valor" class="num"><strong>{{ cifras.tir }}</strong></td>
+    </tr>
+    <tr>
+      <td data-titulo="Indicador">Periodo de recuperación</td>
+      <td data-titulo="Celda">{{ leido.celda_recuperacion }}</td>
+      <td data-titulo="Valor" class="num">{{ cifras.recuperacion }}</td>
+    </tr>
+    <tr>
+      <td data-titulo="Indicador">Tasa de descuento (la tasa del préstamo)</td>
+      <td data-titulo="Celda">{{ leido.celda_tasa }}</td>
+      <td data-titulo="Valor" class="num">{{ cifras.tasa }}</td>
+    </tr>
+    <tr>
+      <td data-titulo="Indicador">Inversión inicial (año 0)</td>
+      <td data-titulo="Celda">{{ leido.celda_inversion }}</td>
+      <td data-titulo="Valor" class="num">{{ cifras.inversion }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 class="subtitulo">Flujo acumulado</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Periodo</th>
+      <th scope="col" class="num">Flujo del periodo</th>
+      <th scope="col" class="num">Flujo acumulado</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in leido.acumulado %}
+    <tr>
+      <td data-titulo="Periodo">{{ p.nombre }}</td>
+      <td data-titulo="Flujo del periodo" class="num">{{ p.flujo_texto }}</td>
+      <td data-titulo="Flujo acumulado" class="num">{{ p.acumulado_texto }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja TIR VAR. La inversión se recupera en el año en que el flujo acumulado pasa de negativo a positivo.</p>
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>No hay botones: el mapa de celdas marca esta hoja como 100 % automática. Los flujos vienen de la fila Flujo de caja de la hoja flujo caja proyecto, y la tasa de descuento es la tasa del préstamo.</p>
+  <p>Para ver cómo cambian estos resultados, se cambia la tasa o el plazo en Flujo caja proyecto, o la mezcla y la utilidad esperada en Punto de equilibrio.</p>
+</details>
+{% endblock %}

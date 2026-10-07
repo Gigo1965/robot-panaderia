@@ -13,6 +13,35 @@ todo lo demas son formulas que el robot solo LEE:
       persona lo digita en la interfaz del SaaS, el robot lo recibe, y el robot lo escribe como VALOR
       FIJO en la celda del mes correspondiente (nunca formula viva)" (Decisiones Pendientes #67).
 
+|| 6-oct-2026 (paquete 2): los cuatro SUPUESTOS FINANCIEROS que el mapa marca como manuales:
+
+  actualizar_supuesto("tasa", 12.51)     -> 'flujo caja proyecto' C28 (tasa de interes del prestamo)
+  actualizar_supuesto("plazo", 60)       -> 'flujo caja proyecto' B31 (plazo del prestamo en meses)
+      Mapa 'flujo caja proyectado', seccion 1: "Usuario (persona): 12.51 (valor fijo digitado) -> C28;
+      60 (valor fijo digitado) -> B31" (Decisiones Pendientes #68). El capital de trabajo B37:B40 ya
+      son formulas (seccion 8 del mapa): no se digita.
+  actualizar_supuesto("mezcla", 50)      -> 'Punto de Equilibrio' B11 (mezcla de ventas de Baguette)
+  actualizar_supuesto("utilidad", 20)    -> 'Punto de Equilibrio' B22 (% de utilidad esperada anual)
+      Mapa 'Punto de Equilibrio' y 'Diseño del robot (6)': "DOS celdas de input (B11 y B22)...
+      el ADMINISTRADOR define o ajusta estos 2 valores en una pantalla del SaaS; el robot los recibe y
+      los escribe aqui como valor fijo (UPDATE permitido)" (Decisiones Pendientes #69).
+
+  Decisiones del usuario (6-oct-2026) para estos cuatro datos:
+  * Cada celda guarda el numero como ya lo guarda hoy: C28 guarda 12.51 (sus formulas lo dividen
+    entre 100: B30 y 'TIR VAR' C11); B11 y B22 guardan la fraccion (50 % = 0.5; 20 % = 0.2). En la
+    pantalla siempre se digita el porcentaje.
+  * Los textos fijos 'flujo caja proyecto' A29 ("taza interes 12.51%") y 'Punto de Equilibrio' A23
+    ("... del 20%") NO se tocan: el mapa no los marca como celdas que escriba el robot.
+  * Solo se rechaza lo que romperia las formulas: un dato que no es numero, un porcentaje fuera de
+    0 a 100 o un plazo que no es un numero entero de meses desde 1. Si un cambio dejara un error de
+    formula (por ejemplo una division entre cero), el robot no sube nada: es la regla general de
+    editar_excel para cualquier escritura.
+  * Plazo distinto de 60 meses: se guarda con AVISO (la fila 21 resta la cuota anual en los cinco años).
+  * Margen negativo (una hornada pequeña cargada en la hoja de costo sube el costo unitario sobre el
+    precio): NO se bloquea; es un indicador de que la operacion deja perdida. Se guarda con AVISO.
+  Lecturas para el SaaS (no escriben nada): leer_flujo_proyecto, leer_punto_equilibrio, leer_tir_var,
+  leer_proyeccion_ventas, leer_proyeccion_anual y leer_indicadores (VAN, TIR, punto de equilibrio).
+
 Decisiones del usuario (6-oct-2026):
   * Se sigue el mapa de celdas en todo. Las filas vacias sin funcion (por ejemplo la fila 26 de
     'flujo caja anual') son espacios de orden: el robot no las toca.
@@ -40,6 +69,7 @@ Uso manual desde la Terminal (carpeta ROBOT PANADERO); con --local trabaja sobre
     py -m microservicios.grupo5_financiero.finanzas --local --ver
     py -m microservicios.grupo5_financiero.finanzas --local caja-chica 2026-10-06 3500 "Vales del dia"
     py -m microservicios.grupo5_financiero.finanzas --local salidas octubre 25000
+    py -m microservicios.grupo5_financiero.finanzas --local supuesto tasa 12.51
 """
 import math
 import os
@@ -86,6 +116,34 @@ COLUMNAS_MES = "BCDEFGHIJKLM"              # enero = B ... diciembre = M
 COLUMNA_TOTAL = "N"
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
          "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+# --- Supuestos financieros: 'flujo caja proyecto' y 'Punto de Equilibrio' (paquete 2) ---
+HOJA_PROYECTO = "flujo caja proyecto"
+HOJA_EQUILIBRIO = "Punto de Equilibrio"
+HOJA_TIR = "TIR VAR"
+HOJA_PROYECCION = "proyeccion ventas"
+HOJA_PROYECCION_ANUAL = "proyeccion anual ventas"
+EVENTO_PRESTAMO = "CONFIG_PRESTAMO"
+EVENTO_EQUILIBRIO = "CONFIG_PUNTO_EQUILIBRIO"
+PLAZO_DEL_MODELO = 60                      # la proyeccion resta la cuota en los cinco años (fila 21)
+TOPE_PLAZO = 600                           # tope de seguridad contra un numero mal digitado (50 años)
+# 'celda_mapa' es solo documentacion (donde esta hoy segun el mapa): el robot ubica la celda por la
+# etiqueta de la columna A de su fila. 'guarda': como queda el numero en la celda.
+SUPUESTOS = {
+    "tasa": {"hoja": HOJA_PROYECTO, "celda_mapa": "C28", "columna": "C", "tipo": "porcentaje", "guarda": "numero",
+             "etiqueta": "Tasa de interes del prestamo", "titulo": "Tasa de interés del préstamo",
+             "debe_decir": ("banco", "prestamo"), "evento": EVENTO_PRESTAMO},
+    "plazo": {"hoja": HOJA_PROYECTO, "celda_mapa": "B31", "columna": "B", "tipo": "meses", "guarda": "numero",
+              "etiqueta": "Plazo del prestamo (meses)", "titulo": "Plazo del préstamo",
+              "debe_decir": ("plazo",), "evento": EVENTO_PRESTAMO},
+    "mezcla": {"hoja": HOJA_EQUILIBRIO, "celda_mapa": "B11", "columna": "B", "tipo": "porcentaje", "guarda": "fraccion",
+               "etiqueta": "Mezcla de ventas Baguette", "titulo": "Mezcla de ventas de Baguette",
+               "debe_decir": ("mezcla de ventas", "baguette"), "evento": EVENTO_EQUILIBRIO},
+    "utilidad": {"hoja": HOJA_EQUILIBRIO, "celda_mapa": "B22", "columna": "B", "tipo": "porcentaje", "guarda": "fraccion",
+                 "etiqueta": "Utilidad esperada anual", "titulo": "Utilidad esperada anual",
+                 "debe_decir": ("% utilidad esperada",), "evento": EVENTO_EQUILIBRIO},
+}
 
 
 class FinanzasInvalido(Exception):
@@ -414,6 +472,338 @@ def leer_flujo_anual(wb):
 
 
 # ----------------------------------------------------------------------------
+# 3) Supuestos financieros ('flujo caja proyecto' C28 y B31; 'Punto de Equilibrio' B11 y B22; #68 y #69)
+# ----------------------------------------------------------------------------
+def _sin_acentos(texto):
+    return _clave(texto).translate(str.maketrans("áéíóúü", "aeiouu"))
+
+
+def _filas_que_dicen(ws, palabras, desde=1, empieza=False):
+    """Filas cuya columna A contiene TODAS esas palabras (sin acentos ni mayusculas)."""
+    filas = []
+    for fila in range(desde, ws.max_row + 1):
+        texto = _sin_acentos(ws.cell(fila, 1).value)
+        if texto and all(p in texto for p in palabras) and (not empieza or texto.startswith(palabras[0])):
+            filas.append(fila)
+    return filas
+
+
+def _celda_supuesto(ws, campo):
+    """La celda del supuesto, ubicada por el texto de la columna A de su fila (debe haber una sola)."""
+    definicion = SUPUESTOS[campo]
+    filas = _filas_que_dicen(ws, definicion["debe_decir"], empieza=campo in ("plazo", "mezcla", "utilidad"))
+    if len(filas) != 1:
+        raise KeyError(f"En la columna A de '{definicion['hoja']}' debe haber una sola fila que diga "
+                       f"{' y '.join(definicion['debe_decir'])} (hay {len(filas)}): el mapa y el Excel no coinciden.")
+    return ws[f"{definicion['columna']}{filas[0]}"]
+
+
+def _definicion_supuesto(campo):
+    clave = _clave(campo)
+    if clave not in SUPUESTOS:
+        raise FinanzasInvalido(f"'{campo}' no es un supuesto financiero que se pueda cambiar "
+                               f"(los que si: {', '.join(SUPUESTOS)}). No se escribio nada.")
+    return clave, SUPUESTOS[clave]
+
+
+def _porcentaje(valor, nombre):
+    """'12.51', '12,51' o '12.51 %' -> 12.51. De 0 a 100, con 2 decimales."""
+    if isinstance(valor, bool):
+        raise FinanzasInvalido(f"{nombre}: {valor!r} no es un porcentaje. No se escribio nada.")
+    if _numero(valor) is not None:
+        numero = float(valor)
+    else:
+        texto = str(valor if valor is not None else "").replace("%", "").replace(" ", "").strip()
+        try:
+            numero = float(texto.replace(",", "."))
+        except ValueError:
+            raise FinanzasInvalido(f"{nombre}: {valor!r} no es un porcentaje. Escriba un numero, por ejemplo "
+                                   "12.51. No se escribio nada.") from None
+    if math.isnan(numero) or math.isinf(numero) or not 0 <= round(numero, 2) <= 100:
+        raise FinanzasInvalido(f"{nombre}: debe estar entre 0 y 100 % (llego {valor!r}). No se escribio nada.")
+    numero = round(numero, 2)
+    return int(numero) if numero == int(numero) else numero
+
+
+def _meses(valor, nombre):
+    try:
+        numero = float(str(valor).replace(" ", "").strip())
+    except (TypeError, ValueError):
+        numero = None
+    if isinstance(valor, bool) or numero is None or math.isnan(numero) or math.isinf(numero) \
+            or numero != int(numero) or not 1 <= numero <= TOPE_PLAZO:
+        raise FinanzasInvalido(f"{nombre}: debe ser un numero entero de meses, de 1 a {TOPE_PLAZO} "
+                               f"(llego {valor!r}). No se escribio nada.")
+    return int(numero)
+
+
+def normalizar_supuesto(campo, valor):
+    """Valida el dato y devuelve (lo que se guarda en la celda, el dato como lo ve la persona).
+
+    tasa      '14' -> (14, 14)         la celda guarda el porcentaje tal cual
+    plazo     '60' -> (60, 60)         meses enteros
+    mezcla    '60' -> (0.6, 60)        la celda guarda la fraccion
+    utilidad  '25' -> (0.25, 25)
+    """
+    clave, definicion = _definicion_supuesto(campo)
+    if definicion["tipo"] == "meses":
+        meses = _meses(valor, definicion["titulo"])
+        return meses, meses
+    porcentaje = _porcentaje(valor, definicion["titulo"])
+    if definicion["guarda"] == "fraccion":
+        return round(porcentaje / 100, 4), porcentaje
+    return porcentaje, porcentaje
+
+
+def _como_se_ve(campo, guardado):
+    """El valor de la celda como lo lee una persona: 0.5 -> '50 %', 12.51 -> '12.51 %', 60 -> '60 meses'."""
+    definicion = SUPUESTOS[campo]
+    if _numero(guardado) is None:
+        return repr(guardado)
+    if definicion["tipo"] == "meses":
+        return f"{guardado:g} meses"
+    return f"{round(guardado * 100, 2):g} %" if definicion["guarda"] == "fraccion" else f"{guardado:g} %"
+
+
+def leer_indicadores(wb):
+    """Los resultados que mueven los cuatro supuestos, tal como los calculo el Excel (wb = libro de VALORES)."""
+    equilibrio = leer_punto_equilibrio(wb)
+    prestamo = leer_flujo_proyecto(wb)["prestamo"]
+    tir = leer_tir_var(wb)
+    por_celda = {fila["celda"]: fila["valor"] for fila in equilibrio["filas"]}
+
+    def de(palabras, empieza=True):
+        filas = _filas_que_dicen(wb[HOJA_EQUILIBRIO], palabras, empieza=empieza)
+        return por_celda.get(f"B{filas[0]}") if filas else None
+    return {
+        "tasa": prestamo["tasa"], "plazo": prestamo["plazo"], "cuota_mensual": prestamo["cuota_mensual"],
+        "cuota_anual": prestamo["cuota_anual"], "monto_prestamo": prestamo["monto"],
+        "mezcla": equilibrio["mezcla"]["valor"], "utilidad": equilibrio["utilidad"]["valor"],
+        "margen_baguette": de(("margen de contribucion", "baguette")),
+        "margen_cupcake": de(("margen de contribucion", "cupcake")),
+        "margen_ponderado": de(("margen de contribucion ponderado",)),
+        "equilibrio_base": de(("punto de equilibrio base",)),
+        "equilibrio_ajustado": de(("punto de equilibrio ajustado",)),
+        "van": tir["van"], "tir": tir["tir"], "recuperacion": tir["recuperacion"],
+    }
+
+
+def actualizar_supuesto(campo, valor, origen=ORIGEN_ROBOT):
+    """Cambia UNO de los cuatro supuestos financieros que el mapa marca como manuales.
+
+    campo: 'tasa', 'plazo', 'mezcla' o 'utilidad' (ver SUPUESTOS).
+    valor: como lo digita la persona: el porcentaje (12.51, 50, 20) o los meses (60).
+    Devuelve ademas 'indicadores_antes' e 'indicadores' (VAN, TIR, punto de equilibrio...) y 'avisos'.
+    """
+    clave, definicion = _definicion_supuesto(campo)
+    nuevo, _ = normalizar_supuesto(clave, valor)
+
+    def _editar(wb, wb_valores):
+        celda = _celda_supuesto(wb[definicion["hoja"]], clave)
+        anterior = celda.value
+        if _es_formula(anterior):
+            raise FinanzasInvalido(f"'{definicion['hoja']}'!{celda.coordinate} es una formula: el robot no la sobrescribe.")
+        if _numero(anterior) is None:
+            raise FinanzasInvalido(f"'{definicion['hoja']}'!{celda.coordinate} trae {anterior!r}, que no es un numero: "
+                                   "el robot no lo sobrescribe.")
+        base = {"hoja": definicion["hoja"], "celda": celda.coordinate, "campo": clave, "titulo": definicion["titulo"],
+                "antes": anterior, "despues": nuevo, "antes_texto": _como_se_ve(clave, anterior),
+                "despues_texto": _como_se_ve(clave, nuevo), "avisos": []}
+        if round(float(anterior), 4) == round(float(nuevo), 4):
+            return {"hubo_cambios": False, "estado": "SIN_CAMBIO", **base}
+        antes = leer_indicadores(wb_valores)
+        celda.value = nuevo
+        evento = registrar_evento(
+            wb, modulo=MODULO, tipo_evento=definicion["evento"], entidad=definicion["hoja"], id_entidad=celda.coordinate,
+            accion="UPDATE", estado="OK", origen=origen or ORIGEN_ROBOT, valor_referencia=nuevo,
+            detalle=(f"'{definicion['hoja']}'!{celda.coordinate} {definicion['etiqueta']}: {anterior!r} -> {nuevo!r} "
+                     f"({base['antes_texto']} -> {base['despues_texto']})"))
+        return {"hubo_cambios": True, "estado": "OK", "evento": evento, "indicadores_antes": antes, **base}
+
+    resultado = editar_excel(_editar, descripcion=f"{definicion['etiqueta']}: {nuevo}")
+    if resultado.get("hubo_cambios"):
+        # Segunda lectura: lo que calculo el Excel con el dato nuevo (VAN, TIR, punto de equilibrio).
+        despues = leer_indicadores(leer_excel())
+        resultado["indicadores"] = despues
+        if clave == "plazo" and nuevo != PLAZO_DEL_MODELO:
+            resultado["avisos"].append(
+                f"AVISO: el flujo de caja del proyecto resta la cuota anual en los cinco años (fila 21), sea cual sea "
+                f"el plazo. Con {nuevo} meses la proyeccion de cinco años no coincide con los pagos del prestamo; el "
+                f"modelo esta hecho para {PLAZO_DEL_MODELO} meses. Se guardo igual.")
+        margenes = [despues[m] for m in ("margen_baguette", "margen_cupcake", "margen_ponderado")]
+        if definicion["hoja"] == HOJA_EQUILIBRIO and any(_numero(m) is not None and m < 0 for m in margenes):
+            resultado["avisos"].append(
+                "AVISO: hay un margen de contribucion negativo (el costo unitario de la hornada cargada supera al "
+                "precio): con esa hornada la operacion deja perdida y el punto de equilibrio no es alcanzable. "
+                "Se guardo igual.")
+    return resultado
+
+
+def leer_flujo_proyecto(wb):
+    """La hoja 'flujo caja proyecto' tal como la calculo el Excel (solo LECTURA; wb = libro de VALORES).
+
+    Devuelve {'columnas': [8 titulos], 'filas': [...], 'prestamo': {...}, 'capital': [...], 'capital_total'}.
+    """
+    ws = wb[HOJA_PROYECTO]
+    encabezado = [f for f in range(1, ws.max_row + 1) if _clave(ws.cell(f, 1).value) == "periodo"]
+    final = _filas_que_dicen(ws, ("flujo de caja",), empieza=True)
+    final = [f for f in final if encabezado and f > encabezado[0]]
+    if len(encabezado) != 1 or not final:
+        raise KeyError(f"'{HOJA_PROYECTO}': no encuentro la fila 'PERIODO' o la fila 'FLUJO DE CAJA': el mapa y el "
+                       "Excel no coinciden.")
+    fila_titulos, fila_variedad, fila_final = encabezado[0], encabezado[0] + 1, final[0]
+    letras = "BCDEFGHI"
+    columnas = []
+    for letra in letras:
+        variedad = " ".join(str(ws[f"{letra}{fila_variedad}"].value or "").split())
+        titulo = " ".join(str(ws[f"{letra}{fila_titulos}"].value or "").split())
+        columnas.append(variedad or titulo)
+    filas = []
+    for fila in range(fila_variedad + 1, fila_final + 1):
+        etiqueta = " ".join(str(ws.cell(fila, 1).value or "").split())
+        if not etiqueta:
+            continue
+        valores = [_numero(ws[f"{letra}{fila}"].value) for letra in letras]
+        filas.append({"fila": fila, "etiqueta": etiqueta, "valores": valores,
+                      "clase": "titulo" if all(v is None for v in valores) else "formula"})
+
+    celda_tasa, celda_plazo = _celda_supuesto(ws, "tasa"), _celda_supuesto(ws, "plazo")
+    fila_cuota = _filas_que_dicen(ws, ("amortizacion", "mensual"), desde=fila_final)
+    fila_monto = _filas_que_dicen(ws, ("monto", "prestamo"), desde=fila_final)
+    if len(fila_cuota) != 1 or len(fila_monto) != 1:
+        raise KeyError(f"'{HOJA_PROYECTO}': no encuentro la fila de la cuota mensual o la del monto del prestamo.")
+    prestamo = {"tasa": _numero(celda_tasa.value), "celda_tasa": celda_tasa.coordinate,
+                "plazo": _numero(celda_plazo.value), "celda_plazo": celda_plazo.coordinate,
+                "cuota_mensual": _numero(ws[f"B{fila_cuota[0]}"].value), "celda_cuota_mensual": f"B{fila_cuota[0]}",
+                "cuota_anual": _numero(ws[f"C{fila_cuota[0]}"].value), "celda_cuota_anual": f"C{fila_cuota[0]}",
+                "monto": _numero(ws[f"B{fila_monto[0]}"].value), "celda_monto": f"B{fila_monto[0]}"}
+
+    capital, capital_total, celda_total = [], None, None
+    inicio = _filas_que_dicen(ws, ("capital de trabajo",), desde=fila_monto[0] + 1, empieza=True)
+    if inicio:
+        for fila in range(inicio[0] + 1, ws.max_row + 1):
+            etiqueta = " ".join(str(ws.cell(fila, 1).value or "").split())
+            if not etiqueta:
+                continue
+            if _clave(etiqueta) == "total":
+                capital_total, celda_total = _numero(ws[f"B{fila}"].value), f"B{fila}"
+                break
+            capital.append({"fila": fila, "etiqueta": etiqueta, "valor": _numero(ws[f"B{fila}"].value)})
+    return {"columnas": columnas, "filas": filas, "prestamo": prestamo, "capital": capital,
+            "capital_total": capital_total, "celda_capital_total": celda_total, "plazo_del_modelo": PLAZO_DEL_MODELO}
+
+
+def leer_punto_equilibrio(wb):
+    """La hoja 'Punto de Equilibrio' tal como la calculo el Excel (solo LECTURA; wb = libro de VALORES).
+
+    Devuelve {'filas': [...], 'mezcla': fila, 'utilidad': fila, 'nota'}. Cada fila:
+    {'fila', 'celda', 'etiqueta', 'valor', 'clase': 'manual' | 'formula', 'formato': 'porcentaje' | 'unidades' | 'colones'}.
+    """
+    ws = wb[HOJA_EQUILIBRIO]
+    manuales = {_celda_supuesto(ws, campo).row: campo for campo in ("mezcla", "utilidad")}
+    filas, nota = [], ""
+    for fila in range(2, ws.max_row + 1):
+        etiqueta = " ".join(str(ws.cell(fila, 1).value or "").split())
+        if not etiqueta:
+            continue
+        valor = _numero(ws.cell(fila, 2).value)
+        if valor is None:
+            if etiqueta.casefold().startswith("nota"):
+                nota = etiqueta
+            continue
+        texto = _sin_acentos(etiqueta)
+        if "(%)" in texto or texto.startswith("%"):
+            formato = "porcentaje"
+        elif "unidades" in texto:
+            formato = "unidades"
+        else:
+            formato = "colones"
+        filas.append({"fila": fila, "celda": f"B{fila}", "etiqueta": etiqueta, "valor": valor, "formato": formato,
+                      "clase": "manual" if fila in manuales else "formula", "campo": manuales.get(fila)})
+    return {"filas": filas, "nota": nota,
+            "mezcla": next(f for f in filas if f["campo"] == "mezcla"),
+            "utilidad": next(f for f in filas if f["campo"] == "utilidad")}
+
+
+def leer_tir_var(wb):
+    """La hoja 'TIR VAR' tal como la calculo el Excel (solo LECTURA): VAN, TIR, recuperacion y los flujos."""
+    ws = wb[HOJA_TIR]
+
+    def junto_a(texto, columna_etiqueta, columna_valor):
+        for fila in range(1, ws.max_row + 1):
+            etiqueta = _sin_acentos(ws.cell(fila, columna_etiqueta).value)
+            if etiqueta == texto or (texto.endswith("*") and etiqueta.startswith(texto[:-1])):
+                return _numero(ws.cell(fila, columna_valor).value), ws.cell(fila, columna_valor).coordinate
+        raise KeyError(f"'{HOJA_TIR}': no encuentro la etiqueta '{texto}': el mapa y el Excel no coinciden.")
+
+    van, celda_van = junto_a("van", 6, 7)
+    tir, celda_tir = junto_a("tir", 6, 7)
+    recuperacion, celda_recuperacion = junto_a("periodo de recuperacion*", 6, 7)
+    inversion, celda_inversion = junto_a("io", 2, 3)
+    tasa, celda_tasa = junto_a("i", 2, 3)
+    flujos = []
+    for fila in range(1, ws.max_row + 1):
+        etiqueta = " ".join(str(ws.cell(fila, 2).value or "").split())
+        if re.fullmatch(r"f\d+\s+\d{4}", etiqueta.casefold()):
+            flujos.append({"fila": fila, "etiqueta": etiqueta, "año": etiqueta.split()[-1],
+                           "flujo": _numero(ws.cell(fila, 3).value)})
+    # Flujo acumulado (columnas J = periodo, I = flujo, L = acumulado): empieza en la inversion inicial (negativa).
+    acumulado = []
+    for fila in range(1, ws.max_row + 1):
+        periodo = _numero(ws.cell(fila, 10).value)
+        if periodo is not None and _numero(ws.cell(fila, 12).value) is not None:
+            acumulado.append({"periodo": int(periodo), "flujo": _numero(ws.cell(fila, 9).value),
+                              "acumulado": _numero(ws.cell(fila, 12).value)})
+    return {"van": van, "celda_van": celda_van, "tir": tir, "celda_tir": celda_tir,
+            "recuperacion": recuperacion, "celda_recuperacion": celda_recuperacion,
+            "inversion": inversion, "celda_inversion": celda_inversion, "tasa": tasa, "celda_tasa": celda_tasa,
+            "flujos": flujos, "acumulado": acumulado}
+
+
+def leer_proyeccion_ventas(wb):
+    """La hoja 'proyeccion ventas' (solo LECTURA): un renglon por concepto con Baguette y CupCake."""
+    ws = wb[HOJA_PROYECCION]
+    filas = []
+    for fila in range(1, ws.max_row + 1):
+        etiqueta = " ".join(str(ws.cell(fila, 2).value or "").split())
+        baguette, cupcake = _numero(ws.cell(fila, 3).value), _numero(ws.cell(fila, 4).value)
+        if etiqueta and baguette is not None:
+            filas.append({"fila": fila, "etiqueta": etiqueta, "baguette": baguette, "cupcake": cupcake,
+                          "dinero": "colones" in etiqueta.casefold() or "utilidad" in etiqueta.casefold()})
+    extras = []
+    for fila in range(1, ws.max_row + 1):                     # 'Precio de venta' y 'Costo unitario': el valor esta debajo
+        etiqueta = " ".join(str(ws.cell(fila, 5).value or "").split())
+        if etiqueta and _numero(ws.cell(fila + 1, 5).value) is not None and _numero(ws.cell(fila, 5).value) is None:
+            extras.append({"fila": fila + 1, "etiqueta": etiqueta, "baguette": _numero(ws.cell(fila + 1, 5).value),
+                           "cupcake": _numero(ws.cell(fila + 1, 6).value), "dinero": True})
+    if not filas:
+        raise KeyError(f"'{HOJA_PROYECCION}': no encuentro los renglones de la proyeccion: el mapa y el Excel no coinciden.")
+    return {"filas": extras + filas, "utilidad_anual": _numero(ws["A1"].value), "celda_utilidad_anual": "A1"}
+
+
+def leer_proyeccion_anual(wb):
+    """La hoja 'proyeccion anual ventas' (solo LECTURA): unidades y ventas de cada mes y el total del año."""
+    ws = wb[HOJA_PROYECCION_ANUAL]
+    encabezado = [f for f in range(1, ws.max_row + 1) if _clave(ws.cell(f, 1).value) == "variables"]
+    if len(encabezado) != 1:
+        raise KeyError(f"'{HOJA_PROYECCION_ANUAL}': no encuentro la fila 'Variables': el mapa y el Excel no coinciden.")
+    letras = "CDEFGHIJKLMN"
+    meses = [" ".join(str(ws[f"{letra}{encabezado[0]}"].value or "").split()).capitalize() for letra in letras]
+    filas, total, celda_total = [], None, None
+    for fila in range(encabezado[0] + 1, ws.max_row + 1):
+        etiqueta = " ".join(str(ws.cell(fila, 1).value or "").split())
+        if not etiqueta:
+            continue
+        valores = [_numero(ws[f"{letra}{fila}"].value) for letra in letras]
+        if valores[0] is not None and all(v is None for v in valores[1:]):
+            total, celda_total, etiqueta_total = valores[0], f"C{fila}", etiqueta
+            continue
+        filas.append({"fila": fila, "etiqueta": etiqueta, "meses": valores, "dinero": "unidades" not in etiqueta.casefold()})
+    return {"meses": meses, "filas": filas, "total": total, "celda_total": celda_total,
+            "etiqueta_total": etiqueta_total if total is not None else ""}
+
+
+# ----------------------------------------------------------------------------
 # Uso manual desde la Terminal
 # ----------------------------------------------------------------------------
 def _main(argumentos):
@@ -428,16 +818,24 @@ def _main(argumentos):
         salidas = anual["salidas"]
         print(f"'{HOJA_ANUAL}': fila {salidas['fila']} Salidas de efectivo: "
               + ", ".join(f"{m[:3]} {v if v is not None else '-'}" for m, v in zip(anual["meses"], salidas["meses"])))
+        for nombre, valor in leer_indicadores(wb).items():
+            print(f"   {nombre:<20} {valor}")
         return 0
     try:
         if len(argumentos) == 4 and argumentos[0] == "caja-chica":
             print(registrar_caja_chica(argumentos[1], argumentos[2], argumentos[3], origen="Terminal"))
         elif len(argumentos) == 3 and argumentos[0] == "salidas":
             print(registrar_salida_efectivo(argumentos[1], argumentos[2], origen="Terminal"))
+        elif len(argumentos) == 3 and argumentos[0] == "supuesto":
+            resultado = actualizar_supuesto(argumentos[1], argumentos[2], origen="Terminal")
+            print({k: v for k, v in resultado.items() if not k.startswith("indicadores")})
+            for aviso in resultado.get("avisos", []):
+                print(aviso)
         else:
             print("Uso: py -m microservicios.grupo5_financiero.finanzas [--local] --ver\n"
                   "     py -m microservicios.grupo5_financiero.finanzas [--local] caja-chica <fecha> <monto> \"<motivo>\"\n"
-                  "     py -m microservicios.grupo5_financiero.finanzas [--local] salidas <mes> <monto>")
+                  "     py -m microservicios.grupo5_financiero.finanzas [--local] salidas <mes> <monto>\n"
+                  f"     py -m microservicios.grupo5_financiero.finanzas [--local] supuesto <{' | '.join(SUPUESTOS)}> <valor>")
             return 2
     except FinanzasInvalido as error:
         print(f"RECHAZADO: {error}")
