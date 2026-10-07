@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block titulo %}Detalle comanda digital{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Detalle comanda digital</h1>
+  <p class="encabezado__resumen">Los pedidos digitales, producto por producto: una fila por cada producto de cada pedido. Esta hoja la escribe el robot cuando el bot de WhatsApp recibe el pedido; aquí nadie digita nada: es solo lectura.</p>
+</div>
+
+{% if not lineas %}
+<p class="vacio">Todavía no hay líneas de pedidos digitales en el Excel.</p>
+{% else %}
+<p class="nota">{{ total }} líneas de {{ cuentas.pedidos }} pedidos: {{ cuentas.confirmadas }} confirmadas y {{ cuentas.anuladas }} de rastro de anulación.{% if total > lineas|length %} Se muestran las {{ lineas|length }} más recientes.{% endif %}</p>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Pedido</th>
+      <th scope="col">Fecha</th>
+      <th scope="col">Producto</th>
+      <th scope="col" class="num">Cantidad</th>
+      <th scope="col">Estado</th>
+      <th scope="col" class="num">Subtotal de la línea</th>
+      <th scope="col">Código de oferta</th>
+      <th scope="col">Detonador</th>
+      <th scope="col" class="num">Descuento</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for l in lineas %}
+    <tr{% if l.rastro %} class="comanda--anulado"{% endif %}>
+      <td data-titulo="Fila">{{ l.fila }}</td>
+      <td data-titulo="Pedido"><a href="{{ url_for('pedido', id_pedido=l.pedido) }}">{{ l.id }}</a></td>
+      <td data-titulo="Fecha">{{ l.fecha|fecha }}</td>
+      <td data-titulo="Producto">{{ l.producto }}</td>
+      <td data-titulo="Cantidad" class="num">{{ l.cantidad|cantidad }}</td>
+      <td data-titulo="Estado">{% if l.estado == 'ANULADO' %}<span class="sello sello--anulado">Anulado</span>{% else %}{{ l.estado|capitalize }}{% endif %}</td>
+      <td data-titulo="Subtotal de la línea" class="num">{{ l.subtotal|colones }}</td>
+      <td data-titulo="Código de oferta">{{ l.oferta }}</td>
+      <td data-titulo="Detonador">{{ l.detonador }}</td>
+      <td data-titulo="Descuento" class="num">{{ l.descuento }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja {{ hoja }}. Una fila terminada en -A es el rastro de una anulación: repite el producto con el subtotal en negativo y no devuelve inventario. El número del pedido lleva a su ficha en Pedidos digitales.</p>
+{% endif %}
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>No hay botones: esta hoja la llena el robot junto con cada pedido, en la misma escritura que su resumen en Pedidos digitales. Los precios quedan como valor fijo del momento de la venta.</p>
+  <p>Un pedido se anula completo y solo lo hace administración, desde la ficha del pedido. El inventario suma solo las líneas confirmadas.</p>
+</details>
+{% endblock %}

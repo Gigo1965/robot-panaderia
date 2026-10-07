@@ -52,10 +52,12 @@ MENU = [
         ("Ventas despacho", "grupo1.ventas_despacho", False),
         ("Pedidos digitales", "pedidos", False),
         ("Descuento de día de pago", "grupo1.descuento_general", True),
+        ("Detalle comanda digital", "lecturas.detalle_comanda", False),       # solo lectura (6-oct-2026)
         ("Ingreso de inventario", "grupo1.ingreso_inventario", True),
     ]),
     ("2 Inventario", [
         ("Control de inventario", "grupo2.control_inventario", False),
+        ("Consumo de materia prima", "lecturas.consumo_mp", True),            # solo lectura, solo administracion
         ("Hornadas", "grupo2.hornadas", False),
     ]),
     ("3 Integraciones", [
@@ -336,11 +338,13 @@ from .grupo3 import grupo3          # noqa: E402  NODO INTEGRAL (#64), tablas cr
 from .grupo4 import grupo4          # noqa: E402  Hojas de costo, planilla, gasto operacional y valor activos
 from .grupo5 import grupo5          # noqa: E402  Las siete hojas financieras: flujos de caja (#66 a #68), punto de equilibrio (#69), TIR VAR y proyecciones
 
+from .lecturas import lecturas      # noqa: E402  Detalle comanda digital y Consumo de Materia Prima (solo lectura)
 app.register_blueprint(grupo1)
 app.register_blueprint(grupo2)
 app.register_blueprint(grupo3)
 app.register_blueprint(grupo4)
 app.register_blueprint(grupo5)
+app.register_blueprint(lecturas)
 
 
 # ----------------------------------------------------------------------------

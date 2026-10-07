@@ -56,6 +56,9 @@ Que revisa:
      porcentaje tal cual; plazo distinto de 60 meses, con aviso. Mezcla de ventas (B11, #69): la celda guarda la
      fraccion; si un margen queda negativo, se guarda con aviso. La pantalla muestra el VAN y la TIR de antes y de
      despues. Las otras tres hojas son solo lectura, sin formularios.
+  T) Las dos hojas que solo se LEEN (6-oct-2026; Regla #39: todas las hojas se ven en el SaaS): 'Detalle comanda
+     digital' la ven despacho y administracion; 'Consumo de Materia Prima' (la receta y el consumo de cada hornada),
+     solo administracion. Ninguna tiene formularios y abrirlas no escribe nada.
   F) La copia local datos_prueba/maestro_prueba.xlsx quedo IGUAL (misma huella).
 
 Necesita: LibreOffice (igual que las otras pruebas) y Flask.
@@ -68,6 +71,7 @@ Escribe 13 veces en la copia temporal (unos 10 s cada una en la PC): tarda cerca
 || 5-oct-2026 (noche): se agrego Q (Grupo 4, paquete 2), con 8 escrituras mas: ahora son 34 y tarda cerca de 8 minutos.
 || 6-oct-2026: se agrego R (Grupo 5, paquete 1), con 3 escrituras mas: ahora son 37 y tarda cerca de 8.5 minutos.
 || 6-oct-2026: se agrego S (Grupo 5, paquete 2), con 6 escrituras mas: ahora son 43 y tarda cerca de 10 minutos.
+|| 6-oct-2026: se agrego T (dos pantallas de solo lectura), sin escrituras: siguen siendo 43.
 
 Uso (desde la carpeta ROBOT PANADERO):
     py -m saas_demo.probar_saas_demo
@@ -85,6 +89,7 @@ COPIA_TEMPORAL = preparar_copia_temporal()        # ANTES de importar el SaaS: m
 try:
     from . import config, datos                                  # noqa: E402
     from .app import app                                         # noqa: E402
+    from . import lecturas as lec                                # noqa: E402
 except ModuleNotFoundError as error:
     if error.name == "flask":
         sys.exit("Falta la libreria Flask. En la Terminal (carpeta ROBOT PANADERO):\n"
@@ -1326,6 +1331,44 @@ def main():
                                                                          "equilibrio_ajustado", "cuota_anual")),
             f"con la tasa, el plazo y la mezcla del inicio, todo vuelve a su valor: VAN {ind_3['van']:,.2f}, TIR "
             f"{ind_3['tir'] * 100:.2f} %, punto de equilibrio ajustado {ind_3['equilibrio_ajustado']:,.0f}")
+
+    # ------------------------------------------------------------------ T
+    paso("T) Detalle comanda digital (los dos usuarios) y Consumo de materia prima (solo administracion): solo lectura")
+    libro_t = leer_excel()
+    lineas_t, consumo_t = lec.leer_detalle_comanda(libro_t), lec.leer_consumo_mp(libro_t)
+    huella_antes = huella(COPIA_TEMPORAL)
+    menu_despacho, menu_admin = despacho.get("/ventas-despacho").data, admin.get("/ventas-despacho").data
+    for nombre, cliente in (("despacho", despacho), ("administracion", admin)):
+        pagina = cliente.get("/detalle-comanda-digital?actualizar=1")
+        texto = html.unescape(pagina.get_data(as_text=True))
+        revisar(pagina.status_code == 200 and b"data-escribe" not in pagina.data and f"{len(lineas_t)} líneas" in texto
+                and all(l["id"] in texto for l in lineas_t[:lec.LINEAS_EN_PANTALLA])
+                and all(l["producto"] in texto for l in lineas_t[:lec.LINEAS_EN_PANTALLA]),
+                f"{nombre} ve Detalle comanda digital ({len(lineas_t)} lineas de "
+                f"{len({l['pedido'] for l in lineas_t})} pedidos), sin formularios")
+    rastro = next((l for l in lineas_t if l["rastro"]), None)
+    revisar(rastro is not None and rastro["estado"] == pd.ANULADO and rastro["subtotal"] < 0
+            and f'/pedidos/{rastro["pedido"]}"' in admin.get("/detalle-comanda-digital").get_data(as_text=True),
+            f"el rastro de una anulacion ({rastro['id'] if rastro else '?'}) sale como Anulado, con el subtotal en negativo, y "
+            "su enlace lleva al pedido original")
+    revisar(b"/detalle-comanda-digital" in menu_despacho and b"/detalle-comanda-digital" in menu_admin
+            and b"/consumo-materia-prima" in menu_admin and b"/consumo-materia-prima" not in menu_despacho,
+            "menu: Detalle comanda digital para los dos usuarios; Consumo de materia prima solo para administracion")
+    pagina = despacho.get("/consumo-materia-prima")
+    revisar(pagina.status_code == 403 and consumo_t["receta"][0]["materia"].encode() not in pagina.data,
+            "despacho no ve Consumo de materia prima (el servidor responde 403): es solo para administracion")
+    pagina = admin.get("/consumo-materia-prima?actualizar=1")
+    texto = html.unescape(pagina.get_data(as_text=True))
+    lotes = {c["lote"] for c in consumo_t["consumos"][:lec.CONSUMOS_EN_PANTALLA]}
+    revisar(pagina.status_code == 200 and b"data-escribe" not in pagina.data
+            and all(r["materia"] in texto for r in consumo_t["receta"]) and all(lote in texto for lote in lotes)
+            and f"{len(consumo_t['consumos'])} filas de {consumo_t['hornadas']} lotes" in texto,
+            f"administracion ve Consumo de materia prima: la receta ({len(consumo_t['receta'])} renglones) y el consumo por "
+            f"hornada ({len(consumo_t['consumos'])} filas de {consumo_t['hornadas']} lotes), sin formularios")
+    anulada = next((c for c in consumo_t["consumos"] if c["correccion"]), None)
+    revisar(anulada is not None and anulada["paquetes"] < 0,
+            f"la hornada anulada de la seccion K ({anulada['lote'] if anulada else '?'}) aparece con sus filas en negativo")
+    revisar(huella(COPIA_TEMPORAL) == huella_antes, "abrir las dos pantallas no escribio nada en el Excel")
 
     # ------------------------------------------------------------------ F
     paso("F) Cierre")

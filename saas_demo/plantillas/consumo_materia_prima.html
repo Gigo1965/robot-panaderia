@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block titulo %}Consumo de materia prima{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Consumo de materia prima</h1>
+  <p class="encabezado__resumen">La receta de cada producto horneado y lo que consumió cada hornada, tal como está en el Excel. La receta sigue a las hojas de costo y el consumo lo escribe el robot con cada hornada; aquí nadie digita nada: es solo lectura.</p>
+</div>
+
+<h2 class="subtitulo">Receta por unidad horneada</h2>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Producto horneado</th>
+      <th scope="col">Código</th>
+      <th scope="col">Materia prima</th>
+      <th scope="col" class="num">Cantidad por unidad</th>
+      <th scope="col">Unidad</th>
+      <th scope="col" class="num">Contenido por paquete</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in receta %}
+    <tr>
+      <td data-titulo="Fila">{{ r.fila }}</td>
+      <td data-titulo="Producto horneado">{{ r.producto }}</td>
+      <td data-titulo="Código">{{ r.codigo }}</td>
+      <td data-titulo="Materia prima">{{ r.materia }}</td>
+      <td data-titulo="Cantidad por unidad" class="num">{{ r.cantidad|cantidad }}</td>
+      <td data-titulo="Unidad">{{ r.unidad }}</td>
+      <td data-titulo="Contenido por paquete" class="num">{{ r.contenido|cantidad }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Hoja {{ hoja }}, tabla de la receta. Las cantidades vienen de las hojas de costo y el contenido del paquete, de la tabla cruce maestra MP. Antes de registrar una hornada, el robot comprueba con esta receta que alcance la materia prima.</p>
+
+<h2 class="subtitulo">Consumo por hornada</h2>
+{% if not consumos %}
+<p class="vacio">Todavía no hay hornadas con consumo en el Excel.</p>
+{% else %}
+<p class="nota">{{ total }} filas de {{ hornadas }} lotes.{% if total > consumos|length %} Se muestran las {{ consumos|length }} más recientes.{% endif %} Una fila con cantidad negativa es la corrección de una hornada anulada.</p>
+<table class="comandas">
+  <thead>
+    <tr>
+      <th scope="col">Fila</th>
+      <th scope="col">Fecha</th>
+      <th scope="col">Lote</th>
+      <th scope="col">Producto horneado</th>
+      <th scope="col" class="num">Cantidad horneada</th>
+      <th scope="col">Materia prima</th>
+      <th scope="col" class="num">Consumo por unidad</th>
+      <th scope="col" class="num">Consumo total</th>
+      <th scope="col" class="num">Contenido por paquete</th>
+      <th scope="col" class="num">Paquetes consumidos</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in consumos %}
+    <tr{% if c.correccion %} class="comanda--anulado"{% endif %}>
+      <td data-titulo="Fila">{{ c.fila }}</td>
+      <td data-titulo="Fecha">{{ c.fecha|fecha }}</td>
+      <td data-titulo="Lote">{{ c.lote }}</td>
+      <td data-titulo="Producto horneado">{{ c.producto }}</td>
+      <td data-titulo="Cantidad horneada" class="num">{{ c.horneado|cantidad }}</td>
+      <td data-titulo="Materia prima">{{ c.materia }}</td>
+      <td data-titulo="Consumo por unidad" class="num">{{ c.por_unidad|cantidad }}</td>
+      <td data-titulo="Consumo total" class="num">{{ c.total|cantidad }}</td>
+      <td data-titulo="Contenido por paquete" class="num">{{ c.contenido|cantidad }}</td>
+      <td data-titulo="Paquetes consumidos" class="num">{{ c.paquetes }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="nota">Cada fila guarda la receta del momento de la hornada como valor fijo: un cambio futuro de receta no altera lo ya horneado. Control de inventario rebaja los paquetes consumidos.</p>
+{% endif %}
+
+<details class="como">
+  <summary>Cómo funciona esta pantalla</summary>
+  <p>No hay botones. Las filas de consumo las escribe el robot al registrar una hornada en la pantalla Hornadas: una fila por cada materia prima de la receta. Al anular una hornada agrega las mismas filas en negativo.</p>
+</details>
+{% endblock %}

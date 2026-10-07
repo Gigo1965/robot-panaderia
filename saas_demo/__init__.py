@@ -19,4 +19,5 @@ En Render es un servicio aparte del bot (ver app.py).
 || 5-oct-2026 (noche): grupo4.py tambien trae las proporciones de las hojas de costo, Planilla, Gasto operacional y Valor activos.
 || 6-oct-2026: grupo5.py  Flujo caja diario (caja chica del dia, #66) y Flujo caja anual (salidas de efectivo del mes, #67); solo administracion.
 || 6-oct-2026 (paquete 2): grupo5.py tambien trae Flujo caja proyecto (tasa y plazo, #68), Punto de equilibrio (mezcla y utilidad esperada, #69), TIR VAR y las dos proyecciones de ventas (lectura).
+|| 6-oct-2026: lecturas.py  Detalle comanda digital (los dos usuarios) y Consumo de Materia Prima (solo administracion): dos hojas que escribe el robot y que no tenian pantalla propia (Regla #39: todas las hojas se ven en el SaaS).
 """
